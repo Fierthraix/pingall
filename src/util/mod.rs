@@ -6,17 +6,17 @@ use nix::sys::socket;
 use structopt::StructOpt;
 
 #[derive(StructOpt, Debug)]
-pub struct Opt {
+pub(crate) struct Opt {
     /// Interface to search.
     #[structopt[short = "i", long = "interface"]]
-    pub interface: Option<String>,
+    pub(crate) interface: Option<String>,
 
     /// Don't attempt to resolve hostnames.
     #[structopt(short = "d", long = "dont-resolve")]
-    pub dont_resolve: bool,
+    pub(crate) dont_resolve: bool,
 }
 
-pub fn command_exists(command: &str) -> bool {
+pub(crate) fn command_exists(command: &str) -> bool {
     let command = Command::new("which")
         .arg(command)
         .stdout(Stdio::null())
@@ -29,7 +29,7 @@ pub fn command_exists(command: &str) -> bool {
     }
 }
 
-pub fn get_addresses(interface: Option<String>) -> Vec<Ipv4Addr> {
+pub(crate) fn get_addresses(interface: Option<String>) -> Vec<Ipv4Addr> {
     let filter_ip = |address| {
         if let Some(socket::SockAddr::Inet(inet_addr)) = address {
             if let socket::IpAddr::V4(ip_addr) = inet_addr.ip() {

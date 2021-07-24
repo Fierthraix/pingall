@@ -1,7 +1,8 @@
 use std::net::IpAddr;
 use std::process::Stdio;
 
-use pingall::{command_exists, get_addresses, Opt};
+mod util;
+use util::{command_exists, get_addresses, Opt};
 
 use structopt::StructOpt;
 use tokio::process::Command;
