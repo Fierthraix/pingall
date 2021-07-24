@@ -2,7 +2,7 @@ use structopt::StructOpt;
 
 #[derive(StructOpt, Debug)]
 pub struct Opt {
-    /// Subnet to search.
-    #[structopt(name = "subnet")]
-    pub subnet: String,
+    /// Interface to search.
+    #[structopt[short = "i", long = "interface"]]
+    pub interface: Option<String>,
 }
