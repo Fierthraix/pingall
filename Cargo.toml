@@ -1,6 +1,6 @@
 [package]
 name = "pingall"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2018"
 description = "Ping everything you can reach."
 license = "GPL-3.0-or-later"
