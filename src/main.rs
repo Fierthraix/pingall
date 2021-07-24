@@ -1,71 +1,16 @@
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::IpAddr;
 use std::process::Stdio;
 
-use pingall::Opt;
+use pingall::{command_exists, get_addresses, Opt};
 
-use nix::ifaddrs::getifaddrs;
-use nix::sys::socket;
 use structopt::StructOpt;
 use tokio::process::Command;
-
-async fn command_exists(command: &str) -> bool {
-    let command = Command::new("which")
-        .arg(command)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("Error")
-        .wait()
-        .await;
-
-    match command {
-        Ok(status) => status.success(),
-        Err(_) => false,
-    }
-}
-
-fn get_addresses(interface: Option<String>) -> Vec<Ipv4Addr> {
-    let filter_ip = |address| {
-        if let Some(socket::SockAddr::Inet(inet_addr)) = address {
-            if let socket::IpAddr::V4(ip_addr) = inet_addr.ip() {
-                let std_ip = ip_addr.to_std();
-                if std_ip != Ipv4Addr::LOCALHOST {
-                    Some(std_ip)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    };
-    if let Some(interface) = interface {
-        getifaddrs()
-            .unwrap()
-            .filter_map(|ifaddr| {
-                if ifaddr.interface_name == interface && ifaddr.address.is_some() {
-                    filter_ip(ifaddr.address)
-                } else {
-                    None
-                }
-            })
-            .take(1)
-            .collect()
-    } else {
-        getifaddrs()
-            .unwrap()
-            .filter_map(|ifaddr| filter_ip(ifaddr.address))
-            .collect()
-    }
-}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let opt = Opt::from_args();
 
-    let resolve = !opt.dont_resolve && command_exists("avahi-resolve").await;
+    let resolve = !opt.dont_resolve && command_exists("avahi-resolve");
 
     let addresses = get_addresses(opt.interface);
 
