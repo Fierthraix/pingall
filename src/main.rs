@@ -6,7 +6,7 @@ use pingall::{command_exists, get_addresses, Opt};
 use structopt::StructOpt;
 use tokio::process::Command;
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let opt = Opt::from_args();
 
