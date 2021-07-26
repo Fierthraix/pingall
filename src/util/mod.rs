@@ -110,3 +110,7 @@ pub(crate) async fn socket_ping(ip_addr: &IpAddr) -> bool {
 
     pinger.ping(0).await.is_ok()
 }
+
+pub(crate) fn can_open_raw_socket() -> bool {
+    Pinger::new(IpAddr::V4(Ipv4Addr::LOCALHOST)).is_ok()
+}

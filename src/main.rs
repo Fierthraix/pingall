@@ -2,7 +2,7 @@ use std::net::IpAddr;
 use std::process::Stdio;
 
 mod util;
-use util::{command_exists, get_addresses, socket_ping, system_ping, Opt};
+use util::{can_open_raw_socket, command_exists, get_addresses, socket_ping, system_ping, Opt};
 
 use structopt::StructOpt;
 use tokio::process::Command;
@@ -17,8 +17,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Whether to attempt to resolve hostnames.
     let resolve = !opt.dont_resolve && command_exists("avahi-resolve");
 
-    // Whether to use system `ping` command, or open socket.
-    let open_raw_socket = opt.raw_socket && command_exists("ping");
+    // Whether to use system `ping` command, or open a socket ourselves.
+    let open_raw_socket = opt.raw_socket || !command_exists("ping");
+
+    // Check we have permission to open raw sockets.
+    if open_raw_socket && !can_open_raw_socket() {
+        let err_msg = "Either run as root, or run `setcap cap_net_raw+ep $(which pingall)` to allow this app to open raw sockets.";
+        eprintln!("Error opening raw socket.\n{}", err_msg);
+    }
 
     // Get our IP address on each interface we'll be checking.
     let addresses = get_addresses(opt.interface);
@@ -41,23 +47,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Ping all the IP addresses on a subnet formatted `X.X.X.`.
 async fn run_subnet(
     subnet: &str,
-    resolve: bool,
+    resolve_hostname: bool,
     open_socket: bool,
 ) -> Result<PingResults, Box<dyn std::error::Error>> {
     Ok((1..255)
         .map(|i| {
             let ip_addr = IpAddr::V4(format!("{}{}", subnet, i).parse().unwrap());
-            // Ping the address.
             tokio::spawn(async move {
+                // Ping the address.
                 let success = if open_socket {
                     socket_ping(&ip_addr).await
                 } else {
                     system_ping(&ip_addr).await
                 };
 
-                match (success, resolve) {
+                match (success, resolve_hostname) {
                     (true, true) => {
                         // Try to resolve hostname with `avahi-resolve`.
                         let get_hostname = Command::new("avahi-resolve")
