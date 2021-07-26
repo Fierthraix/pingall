@@ -1,8 +1,15 @@
 # pingall
 Utility to _quickly_ and _efficiently_ discover available ip addresses and their hostnames on your network. This program will always finish within 2 seconds, much faster than `nmap 196.168.1.*`.
 
+* Quickly find all ip addresses and hostnames on your network.
+* Populate DNS/mDNS tables automatically.
+
+
 ### Details
-By simultaneously `ping`ing all of the addresses with a 1 second timeout we can guage who is responsive on the network. [tokio](https://tokio.rs/) is used to make it all asynchronous (only 1 thread is used).
+Simultaneously `ping` all of the addresses on your subnets with a 1 second timeout, so we can gauge who is responsive on the network. [tokio](https://tokio.rs/) is used to make it all asynchronous (only 1 thread is used).
+
+### Raw Ping
+The system `ping` command is used by default, as opening raw sockets in unix requires root permissions. To avoid using the ping command, you can use the `--raw-socket` flag, but this will require either `sudo`, or running `setcap cap_net_raw+ep $(which pingall)` to give this program permission.
 
 ## Installation
 ```bash
@@ -26,6 +33,7 @@ USAGE:
 FLAGS:
     -d, --dont-resolve    Don't attempt to resolve hostnames
     -h, --help            Prints help information
+    -r, --raw-socket      Open raw socket instead of using system `ping` command. Requires permissions
     -V, --version         Prints version information
 
 OPTIONS:

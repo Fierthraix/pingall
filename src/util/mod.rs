@@ -18,7 +18,7 @@ pub(crate) struct Opt {
     #[structopt(short = "d", long = "dont-resolve")]
     pub(crate) dont_resolve: bool,
 
-    /// Open raw socket instead of using system `ping` command.
+    /// Open raw socket instead of using system `ping` command. Requires permissions.
     #[structopt(short = "r", long = "raw-socket")]
     pub(crate) raw_socket: bool,
 }
