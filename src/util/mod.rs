@@ -16,6 +16,7 @@ pub(crate) struct Opt {
     pub(crate) dont_resolve: bool,
 }
 
+/// Check if a command is available in the current `$PATH`.
 pub(crate) fn command_exists(command: &str) -> bool {
     let command = Command::new("which")
         .arg(command)
@@ -29,7 +30,10 @@ pub(crate) fn command_exists(command: &str) -> bool {
     }
 }
 
+/// List the IPv4 address associated with an interface.
+/// Given no interface, list all non-loopback IP addresses of all interfaces.
 pub(crate) fn get_addresses(interface: Option<String>) -> Vec<Ipv4Addr> {
+    // Try to convert `nix::ifaddrs::InterfaceAddress` to `std::net::Ipv4Addr`.
     let filter_ip = |address| {
         if let Some(socket::SockAddr::Inet(inet_addr)) = address {
             if let socket::IpAddr::V4(ip_addr) = inet_addr.ip() {
@@ -46,6 +50,7 @@ pub(crate) fn get_addresses(interface: Option<String>) -> Vec<Ipv4Addr> {
             None
         }
     };
+    // Interface supplied, only check it.
     if let Some(interface) = interface {
         getifaddrs()
             .unwrap()
@@ -59,6 +64,7 @@ pub(crate) fn get_addresses(interface: Option<String>) -> Vec<Ipv4Addr> {
             .take(1)
             .collect()
     } else {
+        // Get ip addrs of all interfaces.
         getifaddrs()
             .unwrap()
             .filter_map(|ifaddr| filter_ip(ifaddr.address))
