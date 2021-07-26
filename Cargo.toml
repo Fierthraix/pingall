@@ -11,4 +11,5 @@ repository = "https://github.com/Fierthraix/pingall"
 [dependencies]
 nix = "0.22"
 structopt = "0.3"
-tokio = { version = "1", features = ["macros", "process", "rt"] }
+surge-ping = "0.2"
+tokio = { version = "1", features = ["macros", "net", "process", "rt"] }

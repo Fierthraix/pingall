@@ -2,7 +2,7 @@ use std::net::IpAddr;
 use std::process::Stdio;
 
 mod util;
-use util::{command_exists, get_addresses, Opt};
+use util::{command_exists, get_addresses, socket_ping, system_ping, Opt};
 
 use structopt::StructOpt;
 use tokio::process::Command;
@@ -11,19 +11,27 @@ type PingResults = Vec<tokio::task::JoinHandle<Option<String>>>;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Parse CLI args.
     let opt = Opt::from_args();
 
+    // Whether to attempt to resolve hostnames.
     let resolve = !opt.dont_resolve && command_exists("avahi-resolve");
 
+    // Whether to use system `ping` command, or open socket.
+    let open_raw_socket = opt.raw_socket && command_exists("ping");
+
+    // Get our IP address on each interface we'll be checking.
     let addresses = get_addresses(opt.interface);
 
+    // Ping the subnet and record replies.
     let mut results = vec![];
     for address in addresses {
         let octets = address.octets();
         let ip_subnet = format!("{}.{}.{}.", octets[0], octets[1], octets[2]);
-        results.extend(run_subnet(&ip_subnet, resolve).await?);
+        results.extend(run_subnet(&ip_subnet, resolve, open_raw_socket).await?);
     }
 
+    // Print successful pings.
     for ping in results {
         if let Some(result) = ping.await? {
             println!("{}", result);
@@ -36,27 +44,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 async fn run_subnet(
     subnet: &str,
     resolve: bool,
+    open_socket: bool,
 ) -> Result<PingResults, Box<dyn std::error::Error>> {
     Ok((1..255)
         .map(|i| {
             let ip_addr = IpAddr::V4(format!("{}{}", subnet, i).parse().unwrap());
             // Ping the address.
             tokio::spawn(async move {
-                let mut command = Command::new("ping")
-                    .arg("-W")
-                    .arg("1")
-                    .arg("-c")
-                    .arg("1")
-                    .arg(ip_addr.to_string())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .spawn()
-                    .expect("Failed to spawn");
-
-                // Check if the ping succeeded.
-                let success = match command.wait().await {
-                    Ok(status) => status.code().unwrap_or(1) == 0,
-                    Err(_) => false,
+                let success = if open_socket {
+                    socket_ping(&ip_addr).await
+                } else {
+                    system_ping(&ip_addr).await
                 };
 
                 match (success, resolve) {

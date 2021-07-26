@@ -1,9 +1,12 @@
-use std::net::Ipv4Addr;
-use std::process::{Command, Stdio};
+use std::net::{IpAddr, Ipv4Addr};
+use std::process::Stdio;
+use std::time::Duration;
 
 use nix::ifaddrs::getifaddrs;
 use nix::sys::socket;
 use structopt::StructOpt;
+use surge_ping::Pinger;
+use tokio::process::Command;
 
 #[derive(StructOpt, Debug)]
 pub(crate) struct Opt {
@@ -14,11 +17,15 @@ pub(crate) struct Opt {
     /// Don't attempt to resolve hostnames.
     #[structopt(short = "d", long = "dont-resolve")]
     pub(crate) dont_resolve: bool,
+
+    /// Open raw socket instead of using system `ping` command.
+    #[structopt(short = "r", long = "raw-socket")]
+    pub(crate) raw_socket: bool,
 }
 
 /// Check if a command is available in the current `$PATH`.
 pub(crate) fn command_exists(command: &str) -> bool {
-    let command = Command::new("which")
+    let command = std::process::Command::new("which")
         .arg(command)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -70,4 +77,36 @@ pub(crate) fn get_addresses(interface: Option<String>) -> Vec<Ipv4Addr> {
             .filter_map(|ifaddr| filter_ip(ifaddr.address))
             .collect()
     }
+}
+
+/// Ping using system `ping` command.
+pub(crate) async fn system_ping(ip_addr: &IpAddr) -> bool {
+    let mut command = Command::new("ping")
+        .arg("-W")
+        .arg("1")
+        .arg("-c")
+        .arg("1")
+        .arg(ip_addr.to_string())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("Failed to spawn");
+
+    // Check if the ping succeeded.
+    match command.wait().await {
+        Ok(status) => status.code().unwrap_or(1) == 0,
+        Err(_) => false,
+    }
+}
+
+pub(crate) async fn socket_ping(ip_addr: &IpAddr) -> bool {
+    let mut pinger = if let Ok(pinger) = Pinger::new(*ip_addr) {
+        pinger
+    } else {
+        return false;
+    };
+
+    pinger.timeout(Duration::from_secs(1));
+
+    pinger.ping(0).await.is_ok()
 }
