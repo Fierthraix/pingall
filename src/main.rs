@@ -59,8 +59,8 @@ async fn run_subnet(
                     Err(_) => false,
                 };
 
-                if success {
-                    if resolve {
+                match (success, resolve) {
+                    (true, true) => {
                         // Try to resolve hostname with `avahi-resolve`.
                         let get_hostname = Command::new("avahi-resolve")
                             .arg("--address")
@@ -78,12 +78,9 @@ async fn run_subnet(
                             // Only send back the IP addr.
                             Some(ip_addr.to_string())
                         }
-                    } else {
-                        // Only send back the IP addr.
-                        Some(ip_addr.to_string())
                     }
-                } else {
-                    None
+                    (true, false) => Some(ip_addr.to_string()),
+                    _ => None,
                 }
             })
         })
