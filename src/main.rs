@@ -15,13 +15,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let opt = Opt::from_args();
 
     // Whether to attempt to resolve hostnames.
-    let resolve = !opt.dont_resolve && command_exists("avahi-resolve");
+    let resolve = match (opt.dont_resolve, command_exists("avahi-resolve")) {
+        (false, true) => true,
+        (false, false) => {
+            if atty::is(atty::Stream::Stderr) {
+                eprintln!("`avahi-resolve` not found, hostname resolution disabled");
+            }
+            false
+        }
+        _ => false,
+    };
 
     // Whether to use system `ping` command, or open a socket ourselves.
     let open_raw_socket = opt.raw_socket || !command_exists("ping");
 
     // Check we have permission to open raw sockets.
-    if open_raw_socket && !can_open_raw_socket() {
+    if open_raw_socket && !can_open_raw_socket() && atty::is(atty::Stream::Stderr) {
         let err_msg = "Either run as root, or run `setcap cap_net_raw+ep $(which pingall)` to allow this app to open raw sockets.";
         eprintln!("Error opening raw socket.\n{}", err_msg);
     }

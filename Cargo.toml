@@ -9,6 +9,7 @@ repository = "https://github.com/Fierthraix/pingall"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+atty = "0.2"
 nix = "0.22"
 structopt = "0.3"
 surge-ping = "0.2"
