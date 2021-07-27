@@ -4,29 +4,9 @@ Utility to _quickly_ and _efficiently_ discover available ip addresses and their
 * Quickly find all ip addresses and hostnames on your network.
 * Populate DNS/mDNS tables automatically.
 
-
-### Details
-Simultaneously `ping` all of the addresses on your subnets with a 1 second timeout, so we can gauge who is responsive on the network. [tokio](https://tokio.rs/) is used to make it all asynchronous (only 1 thread is used).
-
-### Raw Ping
-The system `ping` command is used by default, as opening raw sockets in unix requires root permissions. To avoid using the ping command, you can use the `--raw-socket` flag, but this will require either `sudo`, or running `setcap cap_net_raw+ep $(which pingall)` to give this program permission.
-
-## Installation
-```bash
-cargo install pingall
-```
-
-### Dependencies
-* [cargo](https://rustup.rs/)
-* [ping](https://command-not-found.com/ping)
-* [avahi-resolve](https://command-not-found.com/avahi-resolve) (needed to resolve hostnames)
-
-
 ## Usage
 
 ```bash
-pingall
-
 USAGE:
     pingall [FLAGS] [OPTIONS]
 
@@ -58,3 +38,25 @@ pingall -i wlan0 --dont-resolve
 192.168.0.19
 192.168.0.98
 ```
+
+## Installation
+```bash
+cargo install pingall
+```
+
+## Details
+Simultaneously `ping` all of the addresses on your subnets with a 1 second timeout, so we can gauge who is responsive on the network. [tokio](https://tokio.rs/) is used to make it all asynchronous (only 1 thread is used).
+
+### Raw Ping
+The system `ping` command is used by default, as opening raw sockets in unix requires root permissions. To avoid using the ping command, you can use the `--raw-socket` flag, but this will require either `sudo`, or running 
+```
+setcap cap_net_raw+ep $(which pingall)
+```
+to give this program permission.
+
+### Dependencies
+* [cargo](https://rustup.rs/)
+* [ping](https://command-not-found.com/ping)
+* [avahi-resolve](https://command-not-found.com/avahi-resolve) (needed to resolve hostnames)
+
+
