@@ -4,23 +4,42 @@ use std::time::Duration;
 
 use nix::ifaddrs::getifaddrs;
 use nix::sys::socket;
-use structopt::StructOpt;
-use surge_ping::Pinger;
+//use surge_ping::Pinger;
 use tokio::process::Command;
 
-#[derive(StructOpt, Debug)]
-pub(crate) struct Opt {
-    /// Interface to search.
-    #[structopt[short = "i", long = "interface"]]
+const HELP: &str = r#"
+USAGE:
+    pingall [FLAGS]
+
+FLAGS:
+    -i <interface>        Interface to search
+    -d, --dont-resolve    Don't attempt to resolve hostnames
+    -h, --help            Prints help information
+    -r, --raw-socket      Open raw socket instead of using system `ping` command. Requires permissions
+"#;
+
+#[derive(Debug)]
+pub(crate) struct Args {
     pub(crate) interface: Option<String>,
 
-    /// Don't attempt to resolve hostnames.
-    #[structopt(short = "d", long = "dont-resolve")]
     pub(crate) dont_resolve: bool,
 
-    /// Open raw socket instead of using system `ping` command. Requires permissions.
-    #[structopt(short = "r", long = "raw-socket")]
     pub(crate) raw_socket: bool,
+}
+
+pub(crate) fn get_args() -> Args {
+    let mut pargs = pico_args::Arguments::from_env();
+
+    if pargs.contains(["-h", "--help"]) {
+        print!("{}", HELP);
+        std::process::exit(0);
+    }
+
+    Args {
+        interface: pargs.opt_value_from_str("-i").unwrap(),
+        dont_resolve: pargs.contains(["-d", "--dont-resolve"]),
+        raw_socket: pargs.contains(["-r", "--raw-socket"]),
+    }
 }
 
 /// Check if a command is available in the current `$PATH`.
@@ -100,17 +119,26 @@ pub(crate) async fn system_ping(ip_addr: &IpAddr) -> bool {
 }
 
 pub(crate) async fn socket_ping(ip_addr: &IpAddr) -> bool {
-    let mut pinger = if let Ok(pinger) = Pinger::new(*ip_addr) {
-        pinger
-    } else {
-        return false;
-    };
-
-    pinger.timeout(Duration::from_secs(1));
-
-    pinger.ping(0).await.is_ok()
+    ping::ping(
+        *ip_addr,
+        Some(Duration::from_secs(1)),
+        None,
+        None,
+        None,
+        None,
+    )
+    .is_ok()
 }
 
 pub(crate) fn can_open_raw_socket() -> bool {
-    Pinger::new(IpAddr::V4(Ipv4Addr::LOCALHOST)).is_ok()
+    let localhost = IpAddr::V4(Ipv4Addr::LOCALHOST);
+    ping::ping(
+        localhost,
+        Some(Duration::from_secs(1)),
+        None,
+        None,
+        None,
+        None,
+    )
+    .is_ok()
 }

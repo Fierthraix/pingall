@@ -2,20 +2,30 @@ use std::net::IpAddr;
 use std::process::Stdio;
 
 mod util;
-use util::{can_open_raw_socket, command_exists, get_addresses, socket_ping, system_ping, Opt};
+use util::{
+    can_open_raw_socket, command_exists, get_addresses, get_args, socket_ping, system_ping,
+};
 
-use structopt::StructOpt;
 use tokio::process::Command;
 
 type PingResults = Vec<tokio::task::JoinHandle<Option<String>>>;
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            run().await.unwrap();
+        })
+}
+
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Parse CLI args.
-    let opt = Opt::from_args();
+    let args = get_args();
 
     // Whether to attempt to resolve hostnames.
-    let resolve = match (opt.dont_resolve, command_exists("avahi-resolve")) {
+    let resolve = match (args.dont_resolve, command_exists("avahi-resolve")) {
         (false, true) => true,
         (false, false) => {
             if atty::is(atty::Stream::Stderr) {
@@ -27,7 +37,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Whether to use system `ping` command, or open a socket ourselves.
-    let open_raw_socket = opt.raw_socket || !command_exists("ping");
+    let open_raw_socket = args.raw_socket || !command_exists("ping");
 
     // Check we have permission to open raw sockets.
     if open_raw_socket && !can_open_raw_socket() && atty::is(atty::Stream::Stderr) {
@@ -36,7 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Get our IP address on each interface we'll be checking.
-    let addresses = get_addresses(opt.interface);
+    let addresses = get_addresses(args.interface);
 
     // Ping the subnet and record replies.
     let mut results = vec![];
