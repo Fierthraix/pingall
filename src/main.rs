@@ -40,7 +40,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let open_raw_socket = args.raw_socket || !command_exists("ping");
 
     // Check we have permission to open raw sockets.
-    if open_raw_socket && !can_open_raw_socket() && atty::is(atty::Stream::Stderr) {
+    if open_raw_socket && !can_open_raw_socket().await && atty::is(atty::Stream::Stderr) {
         let err_msg = "Either run as root, or run `setcap cap_net_raw+ep $(which pingall)` to allow this app to open raw sockets.";
         eprintln!("Error opening raw socket.\n{}", err_msg);
     }

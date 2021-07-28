@@ -4,8 +4,9 @@ use std::time::Duration;
 
 use nix::ifaddrs::getifaddrs;
 use nix::sys::socket;
-//use surge_ping::Pinger;
 use tokio::process::Command;
+
+use tiny_ping::Pinger;
 
 const HELP: &str = r#"
 USAGE:
@@ -119,26 +120,14 @@ pub(crate) async fn system_ping(ip_addr: &IpAddr) -> bool {
 }
 
 pub(crate) async fn socket_ping(ip_addr: &IpAddr) -> bool {
-    ping::ping(
-        *ip_addr,
-        Some(Duration::from_secs(1)),
-        None,
-        None,
-        None,
-        None,
-    )
-    .is_ok()
+    let mut pinger = Pinger::new(*ip_addr).unwrap();
+    pinger.timeout(Duration::from_secs(1));
+    pinger.ping(0).await.is_ok()
 }
 
-pub(crate) fn can_open_raw_socket() -> bool {
+pub(crate) async fn can_open_raw_socket() -> bool {
     let localhost = IpAddr::V4(Ipv4Addr::LOCALHOST);
-    ping::ping(
-        localhost,
-        Some(Duration::from_secs(1)),
-        None,
-        None,
-        None,
-        None,
-    )
-    .is_ok()
+    let mut pinger = Pinger::new(localhost).unwrap();
+    pinger.timeout(Duration::from_secs(1));
+    pinger.ping(0).await.is_ok()
 }
