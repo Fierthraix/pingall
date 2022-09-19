@@ -1,6 +1,6 @@
 [package]
 name = "pingall"
-version = "0.3.3"
+version = "0.3.4"
 edition = "2018"
 description = "Ping everything you can reach."
 license = "GPL-3.0-or-later"
@@ -10,7 +10,7 @@ repository = "https://github.com/Fierthraix/pingall"
 
 [dependencies]
 atty = "0.2"
-nix = "0.22"
-pico-args = "0.4"
+nix = "0.25"
+pico-args = "0.5"
 tokio = { version = "1", features = ["net", "process", "rt"] }
-tiny-ping = "0.4"
+tiny-ping = "0.5"

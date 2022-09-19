@@ -61,12 +61,12 @@ pub(crate) fn command_exists(command: &str) -> bool {
 /// Given no interface, list all non-loopback IP addresses of all interfaces.
 pub(crate) fn get_addresses(interface: Option<String>) -> Vec<Ipv4Addr> {
     // Try to convert `nix::ifaddrs::InterfaceAddress` to `std::net::Ipv4Addr`.
-    let filter_ip = |address| {
-        if let Some(socket::SockAddr::Inet(inet_addr)) = address {
-            if let socket::IpAddr::V4(ip_addr) = inet_addr.ip() {
-                let std_ip = ip_addr.to_std();
-                if std_ip != Ipv4Addr::LOCALHOST {
-                    Some(std_ip)
+    let filter_ip = |wrapped_address: Option<socket::SockaddrStorage>| {
+        if let Some(address) = wrapped_address {
+            if let Some(sock_addr) = address.as_sockaddr_in() {
+                let ip_addr = Ipv4Addr::from(sock_addr.ip());
+                if ip_addr != Ipv4Addr::LOCALHOST {
+                    Some(ip_addr)
                 } else {
                     None
                 }
@@ -77,6 +77,7 @@ pub(crate) fn get_addresses(interface: Option<String>) -> Vec<Ipv4Addr> {
             None
         }
     };
+
     // Interface supplied, only check it.
     if let Some(interface) = interface {
         getifaddrs()
@@ -88,7 +89,7 @@ pub(crate) fn get_addresses(interface: Option<String>) -> Vec<Ipv4Addr> {
                     None
                 }
             })
-            .take(1)
+        .take(1)
             .collect()
     } else {
         // Get ip addrs of all interfaces.
