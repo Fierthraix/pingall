@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::net::IpAddr;
 use std::process::Stdio;
 
@@ -56,10 +57,14 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         results.extend(run_subnet(&ip_subnet, resolve, open_raw_socket).await?);
     }
 
+    let mut seen = BTreeSet::new();
     // Print successful pings.
     for ping in results {
         if let Some(result) = ping.await? {
-            println!("{}", result);
+            if !seen.contains(&result) {
+                println!("{}", result);
+                seen.insert(result);
+            }
         }
     }
 
