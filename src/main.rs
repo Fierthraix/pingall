@@ -114,5 +114,5 @@ async fn run_subnet(
                 }
             })
         })
-        .collect())
+    .collect())
 }

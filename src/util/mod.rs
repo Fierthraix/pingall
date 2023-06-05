@@ -17,16 +17,16 @@ FLAGS:
     -d, --dont-resolve    Don't attempt to resolve hostnames
     -h, --help            Prints help information
     -r, --raw-socket      Open raw socket instead of using system `ping` command. Requires permissions
-"#;
+    "#;
 
 #[derive(Debug)]
-pub(crate) struct Args {
-    pub(crate) interface: Option<String>,
+    pub(crate) struct Args {
+        pub(crate) interface: Option<String>,
 
-    pub(crate) dont_resolve: bool,
+        pub(crate) dont_resolve: bool,
 
-    pub(crate) raw_socket: bool,
-}
+        pub(crate) raw_socket: bool,
+    }
 
 pub(crate) fn get_args() -> Args {
     let mut pargs = pico_args::Arguments::from_env();
@@ -66,16 +66,11 @@ pub(crate) fn get_addresses(interface: Option<String>) -> Vec<Ipv4Addr> {
             if let Some(sock_addr) = address.as_sockaddr_in() {
                 let ip_addr = Ipv4Addr::from(sock_addr.ip());
                 if ip_addr != Ipv4Addr::LOCALHOST {
-                    Some(ip_addr)
-                } else {
-                    None
+                    return Some(ip_addr)
                 }
-            } else {
-                None
-            }
-        } else {
-            None
-        }
+            };
+        };
+        None
     };
 
     // Interface supplied, only check it.
@@ -121,14 +116,18 @@ pub(crate) async fn system_ping(ip_addr: &IpAddr) -> bool {
 }
 
 pub(crate) async fn socket_ping(ip_addr: &IpAddr) -> bool {
-    let mut pinger = Pinger::new(*ip_addr).unwrap();
-    pinger.timeout(Duration::from_secs(1));
-    pinger.ping(0).await.is_ok()
+    if let Ok(mut pinger) = Pinger::new(*ip_addr) {
+        pinger.timeout(Duration::from_secs(1));
+        return pinger.ping(0).await.is_ok()
+    }
+    false
 }
 
 pub(crate) async fn can_open_raw_socket() -> bool {
     let localhost = IpAddr::V4(Ipv4Addr::LOCALHOST);
-    let mut pinger = Pinger::new(localhost).unwrap();
-    pinger.timeout(Duration::from_secs(1));
-    pinger.ping(0).await.is_ok()
+    if let Ok(mut pinger) = Pinger::new(localhost) {
+        pinger.timeout(Duration::from_secs(1));
+        return pinger.ping(0).await.is_ok()
+    }
+    false
 }
