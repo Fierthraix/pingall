@@ -20,13 +20,13 @@ FLAGS:
     "#;
 
 #[derive(Debug)]
-    pub(crate) struct Args {
-        pub(crate) interface: Option<String>,
+pub(crate) struct Args {
+    pub(crate) interface: Option<String>,
 
-        pub(crate) dont_resolve: bool,
+    pub(crate) dont_resolve: bool,
 
-        pub(crate) raw_socket: bool,
-    }
+    pub(crate) raw_socket: bool,
+}
 
 pub(crate) fn get_args() -> Args {
     let mut pargs = pico_args::Arguments::from_env();
@@ -64,9 +64,9 @@ pub(crate) fn get_addresses(interface: Option<String>) -> Vec<Ipv4Addr> {
     let filter_ip = |wrapped_address: Option<socket::SockaddrStorage>| {
         if let Some(address) = wrapped_address {
             if let Some(sock_addr) = address.as_sockaddr_in() {
-                let ip_addr = Ipv4Addr::from(sock_addr.ip());
+                let ip_addr = sock_addr.ip();
                 if ip_addr != Ipv4Addr::LOCALHOST {
-                    return Some(ip_addr)
+                    return Some(ip_addr);
                 }
             };
         };
@@ -84,7 +84,7 @@ pub(crate) fn get_addresses(interface: Option<String>) -> Vec<Ipv4Addr> {
                     None
                 }
             })
-        .take(1)
+            .take(1)
             .collect()
     } else {
         // Get ip addrs of all interfaces.
@@ -118,7 +118,7 @@ pub(crate) async fn system_ping(ip_addr: &IpAddr) -> bool {
 pub(crate) async fn socket_ping(ip_addr: &IpAddr) -> bool {
     if let Ok(mut pinger) = Pinger::new(*ip_addr) {
         pinger.timeout(Duration::from_secs(1));
-        return pinger.ping(0).await.is_ok()
+        return pinger.ping(0).await.is_ok();
     }
     false
 }
@@ -127,7 +127,7 @@ pub(crate) async fn can_open_raw_socket() -> bool {
     let localhost = IpAddr::V4(Ipv4Addr::LOCALHOST);
     if let Ok(mut pinger) = Pinger::new(localhost) {
         pinger.timeout(Duration::from_secs(1));
-        return pinger.ping(0).await.is_ok()
+        return pinger.ping(0).await.is_ok();
     }
     false
 }

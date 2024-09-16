@@ -1,5 +1,5 @@
 use std::collections::BTreeSet;
-use std::io::{stdout, stderr, IsTerminal};
+use std::io::{stderr, stdout, IsTerminal};
 use std::net::IpAddr;
 use std::process::Stdio;
 
@@ -114,5 +114,5 @@ async fn run_subnet(
                 }
             })
         })
-    .collect())
+        .collect())
 }
