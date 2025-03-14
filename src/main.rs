@@ -1,5 +1,5 @@
 use std::collections::BTreeSet;
-use std::io::{stderr, stdout, IsTerminal};
+use std::io::{IsTerminal, stderr, stdout};
 use std::net::IpAddr;
 use std::process::Stdio;
 
@@ -55,7 +55,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     for address in addresses {
         let octets = address.octets();
         let ip_subnet = format!("{}.{}.{}.", octets[0], octets[1], octets[2]);
-        results.extend(run_subnet(&ip_subnet, resolve, open_raw_socket).await?);
+        results.extend(run_subnet(&ip_subnet, resolve, open_raw_socket, args.timeout).await?);
     }
 
     let mut seen = BTreeSet::new();
@@ -77,6 +77,7 @@ async fn run_subnet(
     subnet: &str,
     resolve_hostname: bool,
     open_socket: bool,
+    timeout: usize,
 ) -> Result<PingResults, Box<dyn std::error::Error>> {
     Ok((1..255)
         .map(|i| {
@@ -84,9 +85,9 @@ async fn run_subnet(
             tokio::spawn(async move {
                 // Ping the address.
                 let success = if open_socket {
-                    socket_ping(&ip_addr).await
+                    socket_ping(&ip_addr, timeout).await
                 } else {
-                    system_ping(&ip_addr).await
+                    system_ping(&ip_addr, timeout).await
                 };
 
                 match (success, resolve_hostname) {

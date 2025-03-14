@@ -17,6 +17,7 @@ FLAGS:
     -d, --dont-resolve    Don't attempt to resolve hostnames
     -h, --help            Prints help information
     -r, --raw-socket      Open raw socket instead of using system `ping` command. Requires permissions
+    -t, --timeout         Timeout of pings in seconds (default 1)
     "#;
 
 #[derive(Debug)]
@@ -26,6 +27,8 @@ pub(crate) struct Args {
     pub(crate) dont_resolve: bool,
 
     pub(crate) raw_socket: bool,
+
+    pub(crate) timeout: usize,
 }
 
 pub(crate) fn get_args() -> Args {
@@ -40,6 +43,9 @@ pub(crate) fn get_args() -> Args {
         interface: pargs.opt_value_from_str("-i").unwrap(),
         dont_resolve: pargs.contains(["-d", "--dont-resolve"]),
         raw_socket: pargs.contains(["-r", "--raw-socket"]),
+        timeout: pargs
+            .value_from_fn(["-t", "--timeout"], str::parse)
+            .unwrap_or(1),
     }
 }
 
@@ -96,10 +102,10 @@ pub(crate) fn get_addresses(interface: Option<String>) -> Vec<Ipv4Addr> {
 }
 
 /// Ping using system `ping` command.
-pub(crate) async fn system_ping(ip_addr: &IpAddr) -> bool {
+pub(crate) async fn system_ping(ip_addr: &IpAddr, timeout: usize) -> bool {
     let mut command = Command::new("ping")
         .arg("-W")
-        .arg("1")
+        .arg(timeout.to_string())
         .arg("-c")
         .arg("1")
         .arg(ip_addr.to_string())
@@ -115,9 +121,9 @@ pub(crate) async fn system_ping(ip_addr: &IpAddr) -> bool {
     }
 }
 
-pub(crate) async fn socket_ping(ip_addr: &IpAddr) -> bool {
+pub(crate) async fn socket_ping(ip_addr: &IpAddr, timeout: usize) -> bool {
     if let Ok(mut pinger) = Pinger::new(*ip_addr) {
-        pinger.timeout(Duration::from_secs(1));
+        pinger.timeout(Duration::from_secs(timeout as u64));
         return pinger.ping(0).await.is_ok();
     }
     false
