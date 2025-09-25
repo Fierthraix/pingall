@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::io::{IsTerminal, stderr, stdout};
 use std::net::IpAddr;
 use std::process::Stdio;
+use std::sync::Arc;
 
 mod util;
 use util::{
@@ -9,6 +10,7 @@ use util::{
 };
 
 use tokio::process::Command;
+use tokio::sync::Semaphore;
 
 type PingResults = Vec<tokio::task::JoinHandle<Option<String>>>;
 
@@ -18,7 +20,10 @@ fn main() {
         .build()
         .unwrap()
         .block_on(async {
-            run().await.unwrap();
+            if let Err(e) = run().await {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
         })
 }
 
@@ -50,21 +55,44 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Get our IP address on each interface we'll be checking.
     let addresses = get_addresses(args.interface);
 
+    // Create a semaphore to limit concurrent operations (prevents "too many open files")
+    let semaphore = Arc::new(Semaphore::new(150)); // Allow max 50 concurrent pings
+
     // Ping the subnet and record replies.
     let mut results = vec![];
     for address in addresses {
         let octets = address.octets();
         let ip_subnet = format!("{}.{}.{}.", octets[0], octets[1], octets[2]);
-        results.extend(run_subnet(&ip_subnet, resolve, open_raw_socket, args.timeout).await?);
+        results.extend(
+            run_subnet(
+                &ip_subnet,
+                resolve,
+                open_raw_socket,
+                args.timeout,
+                semaphore.clone(),
+            )
+            .await?,
+        );
     }
 
     let mut seen = BTreeSet::new();
     // Print successful pings.
     for ping in results {
-        if let Some(result) = ping.await? {
-            if !seen.contains(&result) {
-                println!("{}", result);
-                seen.insert(result);
+        match ping.await {
+            Ok(Some(result)) => {
+                if !seen.contains(&result) {
+                    println!("{}", result);
+                    seen.insert(result);
+                }
+            }
+            Ok(None) => {
+                // Ping failed, continue to next
+            }
+            Err(e) => {
+                // Task panicked or was cancelled, log but continue
+                if stderr().is_terminal() {
+                    eprintln!("Warning: ping task failed: {}", e);
+                }
             }
         }
     }
@@ -78,42 +106,68 @@ async fn run_subnet(
     resolve_hostname: bool,
     open_socket: bool,
     timeout: usize,
+    semaphore: Arc<Semaphore>,
 ) -> Result<PingResults, Box<dyn std::error::Error>> {
     Ok((1..255)
-        .map(|i| {
-            let ip_addr = IpAddr::V4(format!("{}{}", subnet, i).parse().unwrap());
-            tokio::spawn(async move {
-                // Ping the address.
-                let success = if open_socket {
-                    socket_ping(&ip_addr, timeout).await
-                } else {
-                    system_ping(&ip_addr, timeout).await
-                };
+        .filter_map(|i| {
+            // Parse IP address safely
+            let ip_str = format!("{}{}", subnet, i);
+            match ip_str.parse() {
+                Ok(ip_v4) => {
+                    let ip_addr = IpAddr::V4(ip_v4);
+                    let semaphore = semaphore.clone();
+                    Some(tokio::spawn(async move {
+                        // Acquire permit before doing any work
+                        let _permit = match semaphore.acquire().await {
+                            Ok(permit) => permit,
+                            Err(_) => return None, // Semaphore closed, skip this ping
+                        };
 
-                match (success, resolve_hostname) {
-                    (true, true) => {
-                        // Try to resolve hostname with `avahi-resolve`.
-                        let get_hostname = Command::new("avahi-resolve")
-                            .arg("--address")
-                            .arg(ip_addr.to_string())
-                            .stderr(Stdio::null())
-                            .output();
-
-                        let output = get_hostname.await.unwrap();
-                        if output.status.success() && !output.stdout.is_empty() {
-                            // Send back hostname and IP.
-                            let utf8_out =
-                                String::from_utf8_lossy(&output.stdout).trim().to_string();
-                            Some(utf8_out)
+                        // Ping the address.
+                        let success = if open_socket {
+                            socket_ping(&ip_addr, timeout).await
                         } else {
-                            // Only send back the IP addr.
-                            Some(ip_addr.to_string())
+                            system_ping(&ip_addr, timeout).await
+                        };
+
+                        match (success, resolve_hostname) {
+                            (true, true) => {
+                                // Try to resolve hostname with `avahi-resolve`.
+                                let get_hostname = Command::new("avahi-resolve")
+                                    .arg("--address")
+                                    .arg(ip_addr.to_string())
+                                    .stderr(Stdio::null())
+                                    .output();
+
+                                match get_hostname.await {
+                                    Ok(output) => {
+                                        if output.status.success() && !output.stdout.is_empty() {
+                                            // Send back hostname and IP.
+                                            let utf8_out = String::from_utf8_lossy(&output.stdout)
+                                                .trim()
+                                                .to_string();
+                                            Some(utf8_out)
+                                        } else {
+                                            // Only send back the IP addr.
+                                            Some(ip_addr.to_string())
+                                        }
+                                    }
+                                    Err(_) => {
+                                        // If avahi-resolve fails, just return the IP
+                                        Some(ip_addr.to_string())
+                                    }
+                                }
+                            }
+                            (true, false) => Some(ip_addr.to_string()),
+                            _ => None,
                         }
-                    }
-                    (true, false) => Some(ip_addr.to_string()),
-                    _ => None,
+                    }))
                 }
-            })
+                Err(_) => {
+                    // Skip invalid IP addresses silently
+                    None
+                }
+            }
         })
         .collect())
 }

@@ -94,16 +94,21 @@ pub(crate) fn get_addresses(interface: Option<String>) -> Vec<Ipv4Addr> {
             .collect()
     } else {
         // Get ip addrs of all interfaces.
-        getifaddrs()
-            .unwrap()
-            .filter_map(|ifaddr| filter_ip(ifaddr.address))
-            .collect()
+        match getifaddrs() {
+            Ok(ifaddrs) => ifaddrs
+                .filter_map(|ifaddr| filter_ip(ifaddr.address))
+                .collect(),
+            Err(_) => {
+                eprintln!("Failed to get network interfaces");
+                Vec::new()
+            }
+        }
     }
 }
 
 /// Ping using system `ping` command.
 pub(crate) async fn system_ping(ip_addr: &IpAddr, timeout: usize) -> bool {
-    let mut command = Command::new("ping")
+    let mut command = match Command::new("ping")
         .arg("-W")
         .arg(timeout.to_string())
         .arg("-c")
@@ -112,11 +117,14 @@ pub(crate) async fn system_ping(ip_addr: &IpAddr, timeout: usize) -> bool {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .expect("Failed to spawn");
+    {
+        Ok(cmd) => cmd,
+        Err(_) => return false, // If we can't spawn ping, consider it failed
+    };
 
     // Check if the ping succeeded.
     match command.wait().await {
-        Ok(status) => status.code().unwrap_or(1) == 0,
+        Ok(status) => status.success(),
         Err(_) => false,
     }
 }
