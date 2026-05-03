@@ -1,16 +1,15 @@
 use std::collections::BTreeSet;
 use std::io::{IsTerminal, stderr, stdout};
 use std::net::IpAddr;
-use std::process::Stdio;
 use std::sync::Arc;
 
 mod util;
 use util::{
     PingBackend, can_open_raw_socket, command_exists, get_addresses, get_args,
-    raw_socket_supported, select_ping_backend, socket_ping, system_ping,
+    hostname_resolution_supported, raw_socket_supported, resolve_hostname, select_ping_backend,
+    socket_ping, system_ping,
 };
 
-use tokio::process::Command;
 use tokio::sync::Semaphore;
 
 type PingResults = Vec<tokio::task::JoinHandle<Option<String>>>;
@@ -35,17 +34,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Whether to attempt to resolve hostnames.
     let resolve = if args.dont_resolve {
         false
-    } else if cfg!(target_os = "linux") {
-        match command_exists("avahi-resolve") {
-            true => true,
-            false => {
-                if stdout().is_terminal() {
-                    eprintln!("`avahi-resolve` not found, hostname resolution disabled");
-                }
-                false
-            }
-        }
+    } else if hostname_resolution_supported() {
+        true
     } else {
+        if cfg!(target_os = "linux") && stdout().is_terminal() {
+            eprintln!("`avahi-resolve` not found, hostname resolution disabled");
+        }
         false
     };
 
@@ -118,7 +112,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 /// Ping all the IP addresses on a subnet formatted `X.X.X.`.
 async fn run_subnet(
     subnet: &str,
-    resolve_hostname: bool,
+    resolve_hostnames: bool,
     ping_backend: PingBackend,
     timeout: usize,
     semaphore: Arc<Semaphore>,
@@ -144,34 +138,10 @@ async fn run_subnet(
                             PingBackend::System => system_ping(&ip_addr, timeout).await,
                         };
 
-                        match (success, resolve_hostname) {
-                            (true, true) => {
-                                // Try to resolve hostname with `avahi-resolve`.
-                                let get_hostname = Command::new("avahi-resolve")
-                                    .arg("--address")
-                                    .arg(ip_addr.to_string())
-                                    .stderr(Stdio::null())
-                                    .output();
-
-                                match get_hostname.await {
-                                    Ok(output) => {
-                                        if output.status.success() && !output.stdout.is_empty() {
-                                            // Send back hostname and IP.
-                                            let utf8_out = String::from_utf8_lossy(&output.stdout)
-                                                .trim()
-                                                .to_string();
-                                            Some(utf8_out)
-                                        } else {
-                                            // Only send back the IP addr.
-                                            Some(ip_addr.to_string())
-                                        }
-                                    }
-                                    Err(_) => {
-                                        // If avahi-resolve fails, just return the IP
-                                        Some(ip_addr.to_string())
-                                    }
-                                }
-                            }
+                        match (success, resolve_hostnames) {
+                            (true, true) => resolve_hostname(&ip_addr)
+                                .await
+                                .or_else(|| Some(ip_addr.to_string())),
                             (true, false) => Some(ip_addr.to_string()),
                             _ => None,
                         }

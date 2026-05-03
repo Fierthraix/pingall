@@ -118,6 +118,14 @@ pub(crate) fn command_exists(command: &str) -> bool {
     which::which(command).is_ok()
 }
 
+pub(crate) fn hostname_resolution_supported() -> bool {
+    if cfg!(target_os = "linux") {
+        command_exists("avahi-resolve")
+    } else {
+        cfg!(windows)
+    }
+}
+
 /// List the IPv4 address associated with an interface.
 /// Given no interface, list all non-loopback IP addresses of all interfaces.
 pub(crate) fn get_addresses(interface: Option<String>) -> Vec<Ipv4Addr> {
@@ -149,6 +157,66 @@ pub(crate) fn get_addresses(interface: Option<String>) -> Vec<Ipv4Addr> {
     } else {
         addresses.collect()
     }
+}
+
+#[allow(dead_code)]
+fn format_hostname(ip_addr: &IpAddr, hostname: &str) -> Option<String> {
+    let hostname = hostname.trim().trim_end_matches('.');
+    if hostname.is_empty() || hostname == ip_addr.to_string() {
+        return None;
+    }
+
+    Some(format!("{}\t{}", ip_addr, hostname))
+}
+
+#[cfg(target_os = "linux")]
+fn parse_avahi_resolve_output(ip_addr: &IpAddr, output: &[u8]) -> Option<String> {
+    let output = String::from_utf8_lossy(output);
+
+    output.lines().find_map(|line| {
+        let mut parts = line.split_whitespace();
+        let ip = parts.next()?;
+        let hostname = parts.next()?;
+
+        if ip == ip_addr.to_string() {
+            format_hostname(ip_addr, hostname)
+        } else {
+            None
+        }
+    })
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) async fn resolve_hostname(ip_addr: &IpAddr) -> Option<String> {
+    let output = Command::new("avahi-resolve")
+        .arg("--address")
+        .arg(ip_addr.to_string())
+        .stderr(Stdio::null())
+        .output()
+        .await
+        .ok()?;
+
+    if output.status.success() && !output.stdout.is_empty() {
+        parse_avahi_resolve_output(ip_addr, &output.stdout)
+    } else {
+        None
+    }
+}
+
+#[cfg(windows)]
+pub(crate) async fn resolve_hostname(ip_addr: &IpAddr) -> Option<String> {
+    let ip_addr = *ip_addr;
+    let lookup = tokio::task::spawn_blocking(move || dns_lookup::lookup_addr(&ip_addr))
+        .await
+        .ok()?
+        .ok()?;
+
+    format_hostname(&ip_addr, &lookup)
+}
+
+#[cfg(not(any(target_os = "linux", windows)))]
+pub(crate) async fn resolve_hostname(_ip_addr: &IpAddr) -> Option<String> {
+    None
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -258,7 +326,8 @@ pub(crate) async fn can_open_raw_socket() -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        PingBackend, PingPlatform, RuntimePlatform, select_ping_backend_for, system_ping_args,
+        PingBackend, PingPlatform, RuntimePlatform, format_hostname, select_ping_backend_for,
+        system_ping_args,
     };
     use std::net::{IpAddr, Ipv4Addr};
 
@@ -324,5 +393,34 @@ mod tests {
     #[test]
     fn non_unix_backend_errors_when_system_ping_is_missing() {
         assert!(select_ping_backend_for(RuntimePlatform::NonUnix, false, false).is_err());
+    }
+
+    #[test]
+    fn hostname_output_matches_existing_ip_hostname_format() {
+        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10));
+
+        assert_eq!(
+            format_hostname(&ip, "printer.local."),
+            Some("192.168.1.10\tprinter.local".to_string())
+        );
+    }
+
+    #[test]
+    fn hostname_output_ignores_empty_and_numeric_names() {
+        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10));
+
+        assert_eq!(format_hostname(&ip, ""), None);
+        assert_eq!(format_hostname(&ip, "192.168.1.10"), None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn avahi_output_parses_ip_hostname_line() {
+        let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10));
+
+        assert_eq!(
+            super::parse_avahi_resolve_output(&ip, b"192.168.1.10\tprinter.local\n"),
+            Some("192.168.1.10\tprinter.local".to_string())
+        );
     }
 }

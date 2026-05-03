@@ -59,3 +59,4 @@ to give this program permission.
 * [ping](https://command-not-found.com/ping)
 * [avahi-resolve](https://command-not-found.com/avahi-resolve) on Linux (needed to resolve hostnames)
 
+Hostname resolution uses `avahi-resolve` on Linux and the operating system reverse lookup APIs on Windows.

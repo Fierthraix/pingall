@@ -1,6 +1,6 @@
 [package]
 name = "pingall"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 description = "Ping everything you can reach."
 license = "GPL-3.0-or-later"
@@ -16,3 +16,6 @@ which = "8"
 
 [target.'cfg(unix)'.dependencies]
 tiny-ping = "0.5"
+
+[target.'cfg(windows)'.dependencies]
+dns-lookup = "3"
