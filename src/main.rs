@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 mod util;
 use util::{
-    can_open_raw_socket, command_exists, get_addresses, get_args, socket_ping, system_ping,
+    PingBackend, can_open_raw_socket, command_exists, get_addresses, get_args,
+    raw_socket_supported, select_ping_backend, socket_ping, system_ping,
 };
 
 use tokio::process::Command;
@@ -32,22 +33,36 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args = get_args();
 
     // Whether to attempt to resolve hostnames.
-    let resolve = match (args.dont_resolve, command_exists("avahi-resolve")) {
-        (false, true) => true,
-        (false, false) => {
-            if stdout().is_terminal() {
-                eprintln!("`avahi-resolve` not found, hostname resolution disabled");
+    let resolve = if args.dont_resolve {
+        false
+    } else if cfg!(target_os = "linux") {
+        match command_exists("avahi-resolve") {
+            true => true,
+            false => {
+                if stdout().is_terminal() {
+                    eprintln!("`avahi-resolve` not found, hostname resolution disabled");
+                }
+                false
             }
-            false
         }
-        _ => false,
+    } else {
+        false
     };
 
+    if args.raw_socket && !raw_socket_supported() && stderr().is_terminal() {
+        eprintln!(
+            "Raw socket mode is unsupported on this platform; falling back to system `ping`."
+        );
+    }
+
     // Whether to use system `ping` command, or open a socket ourselves.
-    let open_raw_socket = args.raw_socket || !command_exists("ping");
+    let ping_backend = select_ping_backend(args.raw_socket, command_exists("ping"))?;
 
     // Check we have permission to open raw sockets.
-    if open_raw_socket && !can_open_raw_socket().await && stderr().is_terminal() {
+    if ping_backend == PingBackend::RawSocket
+        && !can_open_raw_socket().await
+        && stderr().is_terminal()
+    {
         let err_msg = "Either run as root, or run `setcap cap_net_raw+ep $(which pingall)` to allow this app to open raw sockets.";
         eprintln!("Error opening raw socket.\n{}", err_msg);
     }
@@ -67,7 +82,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             run_subnet(
                 &ip_subnet,
                 resolve,
-                open_raw_socket,
+                ping_backend,
                 args.timeout,
                 semaphore.clone(),
             )
@@ -104,7 +119,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 async fn run_subnet(
     subnet: &str,
     resolve_hostname: bool,
-    open_socket: bool,
+    ping_backend: PingBackend,
     timeout: usize,
     semaphore: Arc<Semaphore>,
 ) -> Result<PingResults, Box<dyn std::error::Error>> {
@@ -124,10 +139,9 @@ async fn run_subnet(
                         };
 
                         // Ping the address.
-                        let success = if open_socket {
-                            socket_ping(&ip_addr, timeout).await
-                        } else {
-                            system_ping(&ip_addr, timeout).await
+                        let success = match ping_backend {
+                            PingBackend::RawSocket => socket_ping(&ip_addr, timeout).await,
+                            PingBackend::System => system_ping(&ip_addr, timeout).await,
                         };
 
                         match (success, resolve_hostname) {

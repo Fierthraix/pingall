@@ -13,7 +13,7 @@ USAGE:
 FLAGS:
     -d, --dont-resolve    Don't attempt to resolve hostnames
     -h, --help            Prints help information
-    -r, --raw-socket      Open raw socket instead of using system `ping` command. Requires permissions
+    -r, --raw-socket      Open raw socket instead of using system `ping` command. Unix only, requires permissions
     -V, --version         Prints version information
 
 OPTIONS:
@@ -48,7 +48,7 @@ cargo install pingall
 Simultaneously `ping` all of the addresses on your subnets with a 1 second timeout, so we can gauge who is responsive on the network. [tokio](https://tokio.rs/) is used to make it all asynchronous (only 1 thread is used).
 
 ### Raw Ping
-The system `ping` command is used by default, as opening raw sockets in unix requires root permissions. To avoid using the ping command, you can use the `--raw-socket` flag, but this will require either `sudo`, or running 
+The system `ping` command is used by default. On Windows, `pingall` always uses the system `ping` command. On Unix systems, opening raw sockets requires elevated permissions. To avoid using the ping command, you can use the `--raw-socket` flag, but this will require either `sudo`, or running
 ```
 setcap cap_net_raw+ep $(which pingall)
 ```
@@ -57,6 +57,5 @@ to give this program permission.
 ### Dependencies
 * [cargo](https://rustup.rs/)
 * [ping](https://command-not-found.com/ping)
-* [avahi-resolve](https://command-not-found.com/avahi-resolve) (needed to resolve hostnames)
-
+* [avahi-resolve](https://command-not-found.com/avahi-resolve) on Linux (needed to resolve hostnames)
 
