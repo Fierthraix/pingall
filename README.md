@@ -44,6 +44,11 @@ pingall -i wlan0 --dont-resolve
 cargo install pingall
 ```
 
+On Arch Linux, `pingall` is also available from the AUR as
+[`pingall`](https://aur.archlinux.org/packages/pingall) for the latest crates.io
+release or [`pingall-git`](https://aur.archlinux.org/packages/pingall-git) for
+the current Git version.
+
 ## Details
 Simultaneously `ping` all of the addresses on your subnets with a 1 second timeout, so we can gauge who is responsive on the network. [tokio](https://tokio.rs/) is used to make it all asynchronous (only 1 thread is used).
 
