@@ -1,18 +1,49 @@
-use std::collections::BTreeSet;
 use std::io::{IsTerminal, stderr, stdout};
-use std::net::IpAddr;
-use std::sync::Arc;
 
-mod util;
-use util::{
-    DiscoveredAddress, InterfaceAddress, PingBackend, can_open_raw_socket, command_exists,
-    get_addresses, get_args, hostname_resolution_supported, raw_socket_supported, resolve_hostname,
-    select_ping_backend, socket_ping, system_ipv6_multicast_ping, system_ping,
+use clap::{ArgAction, Parser};
+use pingall::cli_support::{
+    PingBackend, can_open_raw_socket, command_exists, hostname_resolution_supported,
+    raw_socket_supported, select_ping_backend,
 };
+use pingall::{ScanOptions, scan_each};
 
-use tokio::sync::Semaphore;
+#[derive(Debug, Parser)]
+#[command(version, about)]
+struct Args {
+    /// Interface to search.
+    #[arg(short, long)]
+    interface: Option<String>,
 
-type PingResults = Vec<tokio::task::JoinHandle<Option<String>>>;
+    /// Don't attempt to resolve hostnames.
+    #[arg(short = 'd', long = "dont-resolve", alias = "no-resolve", action = ArgAction::SetTrue)]
+    dont_resolve: bool,
+
+    /// Open raw socket instead of using system `ping` command. Unix only, requires permissions.
+    #[arg(short = 'r', long = "raw-socket", action = ArgAction::SetTrue)]
+    raw_socket: bool,
+
+    /// Timeout of pings in seconds.
+    #[arg(short, long, default_value_t = 1)]
+    timeout: usize,
+
+    /// Scan IPv4 addresses only.
+    #[arg(short = '4', long = "ipv4", conflicts_with = "ipv6", action = ArgAction::SetTrue)]
+    ipv4: bool,
+
+    /// Scan IPv6 addresses only.
+    #[arg(short = '6', long = "ipv6", conflicts_with = "ipv4", action = ArgAction::SetTrue)]
+    ipv6: bool,
+}
+
+impl Args {
+    fn scan_ipv4(&self) -> bool {
+        !self.ipv6
+    }
+
+    fn scan_ipv6(&self) -> bool {
+        !self.ipv4
+    }
+}
 
 fn main() {
     tokio::runtime::Builder::new_current_thread()
@@ -28,11 +59,9 @@ fn main() {
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    // Parse CLI args.
-    let args = get_args();
+    let args = Args::parse();
 
-    // Whether to attempt to resolve hostnames.
-    let resolve = if args.dont_resolve {
+    let resolve_hostnames = if args.dont_resolve {
         false
     } else if hostname_resolution_supported() {
         true
@@ -49,15 +78,12 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    // Whether to use system `ping` command, or open a socket ourselves.
     let system_ping_exists = command_exists("ping");
     if args.scan_ipv6() && !system_ping_exists {
         return Err("system `ping` command not found and IPv6 discovery requires it".into());
     }
 
     let ping_backend = select_ping_backend(args.raw_socket, system_ping_exists)?;
-
-    // Check we have permission to open raw sockets.
     if args.scan_ipv4()
         && ping_backend == PingBackend::RawSocket
         && !can_open_raw_socket().await
@@ -67,160 +93,18 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("Error opening raw socket.\n{}", err_msg);
     }
 
-    // Get our IP address on each interface we'll be checking.
-    let addresses = get_addresses(args.interface.clone());
+    let ipv4 = args.scan_ipv4();
+    let ipv6 = args.scan_ipv6();
+    let options = ScanOptions {
+        interface: args.interface,
+        resolve_hostnames,
+        raw_socket: args.raw_socket,
+        timeout: args.timeout,
+        ipv4,
+        ipv6,
+    };
 
-    // Create a semaphore to limit concurrent operations (prevents "too many open files")
-    let semaphore = Arc::new(Semaphore::new(150));
-
-    // Ping the subnet and record replies.
-    let mut results = vec![];
-    let mut ipv6_interfaces = BTreeSet::new();
-    for address in addresses {
-        match address {
-            InterfaceAddress::V4(address) if args.scan_ipv4() => {
-                results.extend(
-                    run_ipv4_subnet(
-                        address,
-                        resolve,
-                        ping_backend,
-                        args.timeout,
-                        semaphore.clone(),
-                    )
-                    .await?,
-                );
-            }
-            InterfaceAddress::V4(_) => {}
-            InterfaceAddress::V6 {
-                ip: _,
-                interface,
-                index,
-            } if args.scan_ipv6() => {
-                ipv6_interfaces.insert((interface, index));
-            }
-            InterfaceAddress::V6 { .. } => {}
-        }
-    }
-
-    if system_ping_exists {
-        for (interface, index) in ipv6_interfaces {
-            results.extend(
-                run_ipv6_interface(&interface, index, resolve, args.timeout, semaphore.clone())
-                    .await?,
-            );
-        }
-    }
-
-    let mut seen = BTreeSet::new();
-    // Print successful pings.
-    for ping in results {
-        match ping.await {
-            Ok(Some(result)) => {
-                if !seen.contains(&result) {
-                    println!("{}", result);
-                    seen.insert(result);
-                }
-            }
-            Ok(None) => {
-                // Ping failed, continue to next
-            }
-            Err(e) => {
-                // Task panicked or was cancelled, log but continue
-                if stderr().is_terminal() {
-                    eprintln!("Warning: ping task failed: {}", e);
-                }
-            }
-        }
-    }
+    scan_each(options, |result| println!("{}", result)).await?;
 
     Ok(())
-}
-
-/// Ping all the IP addresses on the local IPv4 `/24`.
-async fn run_ipv4_subnet(
-    address: std::net::Ipv4Addr,
-    resolve_hostnames: bool,
-    ping_backend: PingBackend,
-    timeout: usize,
-    semaphore: Arc<Semaphore>,
-) -> Result<PingResults, Box<dyn std::error::Error>> {
-    let octets = address.octets();
-
-    Ok((1..255)
-        .map(|i| {
-            let ip_addr = IpAddr::V4(std::net::Ipv4Addr::new(octets[0], octets[1], octets[2], i));
-            ping_address(
-                ip_addr,
-                resolve_hostnames,
-                ping_backend,
-                timeout,
-                semaphore.clone(),
-            )
-        })
-        .collect())
-}
-
-async fn run_ipv6_interface(
-    interface: &str,
-    index: Option<u32>,
-    resolve_hostnames: bool,
-    timeout: usize,
-    semaphore: Arc<Semaphore>,
-) -> Result<PingResults, Box<dyn std::error::Error>> {
-    let addresses = system_ipv6_multicast_ping(interface, index, timeout).await;
-
-    Ok(addresses
-        .into_iter()
-        .map(|address| format_successful_address(address, resolve_hostnames, semaphore.clone()))
-        .collect())
-}
-
-fn ping_address(
-    ip_addr: IpAddr,
-    resolve_hostnames: bool,
-    ping_backend: PingBackend,
-    timeout: usize,
-    semaphore: Arc<Semaphore>,
-) -> tokio::task::JoinHandle<Option<String>> {
-    tokio::spawn(async move {
-        // Acquire permit before doing any work.
-        let _permit = match semaphore.acquire().await {
-            Ok(permit) => permit,
-            Err(_) => return None,
-        };
-
-        let success = match ping_backend {
-            PingBackend::RawSocket => socket_ping(&ip_addr, timeout).await,
-            PingBackend::System => system_ping(&ip_addr, timeout).await,
-        };
-
-        match (success, resolve_hostnames) {
-            (true, true) => resolve_hostname(&ip_addr)
-                .await
-                .or_else(|| Some(ip_addr.to_string())),
-            (true, false) => Some(ip_addr.to_string()),
-            _ => None,
-        }
-    })
-}
-
-fn format_successful_address(
-    address: DiscoveredAddress,
-    resolve_hostnames: bool,
-    semaphore: Arc<Semaphore>,
-) -> tokio::task::JoinHandle<Option<String>> {
-    tokio::spawn(async move {
-        let _permit = match semaphore.acquire().await {
-            Ok(permit) => permit,
-            Err(_) => return None,
-        };
-
-        if resolve_hostnames {
-            resolve_hostname(&address.ip_addr)
-                .await
-                .or(Some(address.display_addr))
-        } else {
-            Some(address.display_addr)
-        }
-    })
 }

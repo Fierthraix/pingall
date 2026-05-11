@@ -4,53 +4,14 @@ use std::process::Stdio;
 #[cfg(unix)]
 use std::time::Duration;
 
-use clap::{ArgAction, Parser};
 use if_addrs::{IfAddr, get_if_addrs};
 use tokio::process::Command;
 
 #[cfg(unix)]
 use tiny_ping::Pinger;
 
-#[derive(Debug, Parser)]
-#[command(version, about)]
-pub(crate) struct Args {
-    /// Interface to search.
-    #[arg(short, long)]
-    pub(crate) interface: Option<String>,
-
-    /// Don't attempt to resolve hostnames.
-    #[arg(short = 'd', long = "dont-resolve", alias = "no-resolve", action = ArgAction::SetTrue)]
-    pub(crate) dont_resolve: bool,
-
-    /// Open raw socket instead of using system `ping` command. Unix only, requires permissions.
-    #[arg(short = 'r', long = "raw-socket", action = ArgAction::SetTrue)]
-    pub(crate) raw_socket: bool,
-
-    /// Timeout of pings in seconds.
-    #[arg(short, long, default_value_t = 1)]
-    pub(crate) timeout: usize,
-
-    /// Scan IPv4 addresses only.
-    #[arg(short = '4', long = "ipv4", conflicts_with = "ipv6", action = ArgAction::SetTrue)]
-    pub(crate) ipv4: bool,
-
-    /// Scan IPv6 addresses only.
-    #[arg(short = '6', long = "ipv6", conflicts_with = "ipv4", action = ArgAction::SetTrue)]
-    pub(crate) ipv6: bool,
-}
-
-impl Args {
-    pub(crate) fn scan_ipv4(&self) -> bool {
-        !self.ipv6
-    }
-
-    pub(crate) fn scan_ipv6(&self) -> bool {
-        !self.ipv4
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum PingBackend {
+pub enum PingBackend {
     System,
     RawSocket,
 }
@@ -72,7 +33,7 @@ fn current_runtime_platform() -> RuntimePlatform {
     RuntimePlatform::NonUnix
 }
 
-pub(crate) fn raw_socket_supported() -> bool {
+pub fn raw_socket_supported() -> bool {
     current_runtime_platform() == RuntimePlatform::Unix
 }
 
@@ -101,7 +62,7 @@ fn select_ping_backend_for(
     }
 }
 
-pub(crate) fn select_ping_backend(
+pub fn select_ping_backend(
     raw_socket_requested: bool,
     system_ping_exists: bool,
 ) -> Result<PingBackend, &'static str> {
@@ -112,16 +73,12 @@ pub(crate) fn select_ping_backend(
     )
 }
 
-pub(crate) fn get_args() -> Args {
-    Args::parse()
-}
-
 /// Check if a command is available in the current `$PATH`.
-pub(crate) fn command_exists(command: &str) -> bool {
+pub fn command_exists(command: &str) -> bool {
     which::which(command).is_ok()
 }
 
-pub(crate) fn hostname_resolution_supported() -> bool {
+pub fn hostname_resolution_supported() -> bool {
     if cfg!(target_os = "linux") {
         command_exists("avahi-resolve")
     } else {
@@ -462,7 +419,7 @@ pub(crate) async fn socket_ping(_ip_addr: &IpAddr, _timeout: usize) -> bool {
 }
 
 #[cfg(unix)]
-pub(crate) async fn can_open_raw_socket() -> bool {
+pub async fn can_open_raw_socket() -> bool {
     let localhost = IpAddr::V4(Ipv4Addr::LOCALHOST);
     if let Ok(mut pinger) = Pinger::new(localhost) {
         pinger.timeout(Duration::from_secs(1));
@@ -472,7 +429,7 @@ pub(crate) async fn can_open_raw_socket() -> bool {
 }
 
 #[cfg(not(unix))]
-pub(crate) async fn can_open_raw_socket() -> bool {
+pub async fn can_open_raw_socket() -> bool {
     false
 }
 
