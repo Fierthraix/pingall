@@ -1,35 +1,52 @@
-use std::net::{IpAddr, Ipv4Addr};
+use std::collections::BTreeSet;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::process::Stdio;
 #[cfg(unix)]
 use std::time::Duration;
 
+use clap::{ArgAction, Parser};
 use if_addrs::{IfAddr, get_if_addrs};
 use tokio::process::Command;
 
 #[cfg(unix)]
 use tiny_ping::Pinger;
 
-const HELP: &str = r#"
-USAGE:
-    pingall [FLAGS]
-
-FLAGS:
-    -i <interface>        Interface to search
-    -d, --dont-resolve    Don't attempt to resolve hostnames
-    -h, --help            Prints help information
-    -r, --raw-socket      Open raw socket instead of using system `ping` command. Unix only, requires permissions
-    -t, --timeout         Timeout of pings in seconds (default 1)
-    "#;
-
-#[derive(Debug)]
+#[derive(Debug, Parser)]
+#[command(version, about)]
 pub(crate) struct Args {
+    /// Interface to search.
+    #[arg(short, long)]
     pub(crate) interface: Option<String>,
 
+    /// Don't attempt to resolve hostnames.
+    #[arg(short = 'd', long = "dont-resolve", alias = "no-resolve", action = ArgAction::SetTrue)]
     pub(crate) dont_resolve: bool,
 
+    /// Open raw socket instead of using system `ping` command. Unix only, requires permissions.
+    #[arg(short = 'r', long = "raw-socket", action = ArgAction::SetTrue)]
     pub(crate) raw_socket: bool,
 
+    /// Timeout of pings in seconds.
+    #[arg(short, long, default_value_t = 1)]
     pub(crate) timeout: usize,
+
+    /// Scan IPv4 addresses only.
+    #[arg(short = '4', long = "ipv4", conflicts_with = "ipv6", action = ArgAction::SetTrue)]
+    pub(crate) ipv4: bool,
+
+    /// Scan IPv6 addresses only.
+    #[arg(short = '6', long = "ipv6", conflicts_with = "ipv4", action = ArgAction::SetTrue)]
+    pub(crate) ipv6: bool,
+}
+
+impl Args {
+    pub(crate) fn scan_ipv4(&self) -> bool {
+        !self.ipv6
+    }
+
+    pub(crate) fn scan_ipv6(&self) -> bool {
+        !self.ipv4
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -96,21 +113,7 @@ pub(crate) fn select_ping_backend(
 }
 
 pub(crate) fn get_args() -> Args {
-    let mut pargs = pico_args::Arguments::from_env();
-
-    if pargs.contains(["-h", "--help"]) {
-        print!("{}", HELP);
-        std::process::exit(0);
-    }
-
-    Args {
-        interface: pargs.opt_value_from_str("-i").unwrap(),
-        dont_resolve: pargs.contains(["-d", "--dont-resolve"]),
-        raw_socket: pargs.contains(["-r", "--raw-socket"]),
-        timeout: pargs
-            .value_from_fn(["-t", "--timeout"], str::parse)
-            .unwrap_or(1),
-    }
+    Args::parse()
 }
 
 /// Check if a command is available in the current `$PATH`.
@@ -126,9 +129,25 @@ pub(crate) fn hostname_resolution_supported() -> bool {
     }
 }
 
-/// List the IPv4 address associated with an interface.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum InterfaceAddress {
+    V4(Ipv4Addr),
+    V6 {
+        ip: Ipv6Addr,
+        interface: String,
+        index: Option<u32>,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DiscoveredAddress {
+    pub(crate) ip_addr: IpAddr,
+    pub(crate) display_addr: String,
+}
+
+/// List the IP addresses associated with an interface.
 /// Given no interface, list all non-loopback IP addresses of all interfaces.
-pub(crate) fn get_addresses(interface: Option<String>) -> Vec<Ipv4Addr> {
+pub(crate) fn get_addresses(interface: Option<String>) -> Vec<InterfaceAddress> {
     let ifaddrs = match get_if_addrs() {
         Ok(ifaddrs) => ifaddrs,
         Err(_) => {
@@ -147,16 +166,22 @@ pub(crate) fn get_addresses(interface: Option<String>) -> Vec<Ipv4Addr> {
         }
 
         match ifaddr.addr {
-            IfAddr::V4(addr) => Some(addr.ip),
-            IfAddr::V6(_) => None,
+            IfAddr::V4(addr) => Some(InterfaceAddress::V4(addr.ip)),
+            IfAddr::V6(addr) => {
+                if addr.ip.is_unspecified() || addr.ip.is_multicast() {
+                    None
+                } else {
+                    Some(InterfaceAddress::V6 {
+                        ip: addr.ip,
+                        interface: ifaddr.name,
+                        index: ifaddr.index,
+                    })
+                }
+            }
         }
     });
 
-    if interface.is_some() {
-        addresses.take(1).collect()
-    } else {
-        addresses.collect()
-    }
+    addresses.collect()
 }
 
 #[allow(dead_code)]
@@ -257,13 +282,20 @@ fn system_ping_args(platform: PingPlatform, ip_addr: &IpAddr, timeout: usize) ->
             timeout.saturating_mul(1000).to_string(),
             ip_addr.to_string(),
         ],
-        PingPlatform::Linux | PingPlatform::OtherUnix => vec![
-            "-c".to_string(),
-            "1".to_string(),
-            "-W".to_string(),
-            timeout.to_string(),
-            ip_addr.to_string(),
-        ],
+        PingPlatform::Linux | PingPlatform::OtherUnix => {
+            let mut args = Vec::new();
+            if ip_addr.is_ipv6() {
+                args.push("-6".to_string());
+            }
+            args.extend([
+                "-c".to_string(),
+                "1".to_string(),
+                "-W".to_string(),
+                timeout.to_string(),
+                ip_addr.to_string(),
+            ]);
+            args
+        }
         PingPlatform::Macos => vec![
             "-c".to_string(),
             "1".to_string(),
@@ -274,10 +306,19 @@ fn system_ping_args(platform: PingPlatform, ip_addr: &IpAddr, timeout: usize) ->
     }
 }
 
+fn system_ping_command(platform: PingPlatform, ip_addr: &IpAddr) -> &'static str {
+    if platform == PingPlatform::Macos && ip_addr.is_ipv6() {
+        "ping6"
+    } else {
+        "ping"
+    }
+}
+
 /// Ping using system `ping` command.
 pub(crate) async fn system_ping(ip_addr: &IpAddr, timeout: usize) -> bool {
-    let args = system_ping_args(current_ping_platform(), ip_addr, timeout);
-    let mut command = match Command::new("ping")
+    let platform = current_ping_platform();
+    let args = system_ping_args(platform, ip_addr, timeout);
+    let mut command = match Command::new(system_ping_command(platform, ip_addr))
         .args(args)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -292,6 +333,118 @@ pub(crate) async fn system_ping(ip_addr: &IpAddr, timeout: usize) -> bool {
         Ok(status) => status.success(),
         Err(_) => false,
     }
+}
+
+fn scoped_ipv6_multicast_target(
+    platform: PingPlatform,
+    interface: &str,
+    index: Option<u32>,
+) -> String {
+    let scope = if platform == PingPlatform::Windows {
+        index.map_or_else(|| interface.to_string(), |index| index.to_string())
+    } else {
+        interface.to_string()
+    };
+
+    format!("ff02::1%{}", scope)
+}
+
+fn system_ipv6_multicast_ping_command(platform: PingPlatform) -> &'static str {
+    if platform == PingPlatform::Macos {
+        "ping6"
+    } else {
+        "ping"
+    }
+}
+
+fn system_ipv6_multicast_ping_args(
+    platform: PingPlatform,
+    interface: &str,
+    index: Option<u32>,
+    timeout: usize,
+) -> Vec<String> {
+    let target = scoped_ipv6_multicast_target(platform, interface, index);
+
+    match platform {
+        PingPlatform::Windows => vec![
+            "/n".to_string(),
+            "1".to_string(),
+            "/w".to_string(),
+            timeout.saturating_mul(1000).to_string(),
+            target,
+        ],
+        PingPlatform::Linux | PingPlatform::OtherUnix => vec![
+            "-6".to_string(),
+            "-w".to_string(),
+            timeout.to_string(),
+            target,
+        ],
+        PingPlatform::Macos => vec![
+            "-c".to_string(),
+            "1".to_string(),
+            "-W".to_string(),
+            timeout.saturating_mul(1000).to_string(),
+            target,
+        ],
+    }
+}
+
+fn parse_ping_reply_addresses(output: &[u8]) -> Vec<DiscoveredAddress> {
+    let output = String::from_utf8_lossy(output);
+    let mut seen = BTreeSet::new();
+
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut words = line.split_whitespace();
+            while let Some(word) = words.next() {
+                if word.eq_ignore_ascii_case("from") {
+                    let mut candidate = words.next()?.trim_matches(|c| c == '[' || c == ']');
+
+                    while let Some(stripped) = candidate
+                        .strip_suffix(':')
+                        .or_else(|| candidate.strip_suffix(','))
+                    {
+                        candidate = stripped;
+                    }
+
+                    let display_addr = candidate.to_string();
+                    let ip_addr = candidate.split_once('%').map_or(candidate, |(ip, _)| ip);
+                    return ip_addr
+                        .parse::<IpAddr>()
+                        .ok()
+                        .map(|ip_addr| DiscoveredAddress {
+                            ip_addr,
+                            display_addr,
+                        });
+                }
+            }
+
+            None
+        })
+        .filter(|address| seen.insert(address.display_addr.clone()))
+        .collect()
+}
+
+/// Ping the scoped IPv6 all-nodes multicast address on an interface and return responders.
+pub(crate) async fn system_ipv6_multicast_ping(
+    interface: &str,
+    index: Option<u32>,
+    timeout: usize,
+) -> Vec<DiscoveredAddress> {
+    let platform = current_ping_platform();
+    let args = system_ipv6_multicast_ping_args(platform, interface, index, timeout);
+    let output = match Command::new(system_ipv6_multicast_ping_command(platform))
+        .args(args)
+        .stderr(Stdio::null())
+        .output()
+        .await
+    {
+        Ok(output) => output,
+        Err(_) => return Vec::new(),
+    };
+
+    parse_ping_reply_addresses(&output.stdout)
 }
 
 #[cfg(unix)]
@@ -326,10 +479,11 @@ pub(crate) async fn can_open_raw_socket() -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        PingBackend, PingPlatform, RuntimePlatform, format_hostname, select_ping_backend_for,
+        PingBackend, PingPlatform, RuntimePlatform, format_hostname, parse_ping_reply_addresses,
+        scoped_ipv6_multicast_target, select_ping_backend_for, system_ipv6_multicast_ping_args,
         system_ping_args,
     };
-    use std::net::{IpAddr, Ipv4Addr};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     #[test]
     fn windows_ping_args_use_count_and_millisecond_timeout() {
@@ -352,12 +506,38 @@ mod tests {
     }
 
     #[test]
+    fn linux_ipv6_ping_args_force_ipv6() {
+        let ip = IpAddr::V6(Ipv6Addr::LOCALHOST);
+
+        assert_eq!(
+            system_ping_args(PingPlatform::Linux, &ip, 1),
+            vec!["-6", "-c", "1", "-W", "1", "::1"]
+        );
+    }
+
+    #[test]
     fn macos_ping_args_use_count_and_millisecond_timeout() {
         let ip = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1));
 
         assert_eq!(
             system_ping_args(PingPlatform::Macos, &ip, 1),
             vec!["-c", "1", "-W", "1000", "192.168.1.1"]
+        );
+    }
+
+    #[test]
+    fn ipv6_multicast_target_uses_windows_interface_index_when_available() {
+        assert_eq!(
+            scoped_ipv6_multicast_target(PingPlatform::Windows, "Ethernet", Some(12)),
+            "ff02::1%12"
+        );
+    }
+
+    #[test]
+    fn linux_ipv6_multicast_ping_args_use_scoped_all_nodes_address() {
+        assert_eq!(
+            system_ipv6_multicast_ping_args(PingPlatform::Linux, "eth0", Some(2), 1),
+            vec!["-6", "-w", "1", "ff02::1%eth0"]
         );
     }
 
@@ -421,6 +601,34 @@ mod tests {
         assert_eq!(
             super::parse_avahi_resolve_output(&ip, b"192.168.1.10\tprinter.local\n"),
             Some("192.168.1.10\tprinter.local".to_string())
+        );
+    }
+
+    #[test]
+    fn ping_reply_parser_finds_ipv6_replies_with_scopes() {
+        let replies = parse_ping_reply_addresses(
+            b"64 bytes from fe80::5054:ff:fe12:3456%eth0: icmp_seq=1 ttl=64 time=0.1 ms\n",
+        );
+
+        assert_eq!(
+            replies,
+            vec![super::DiscoveredAddress {
+                ip_addr: IpAddr::V6("fe80::5054:ff:fe12:3456".parse::<Ipv6Addr>().unwrap()),
+                display_addr: "fe80::5054:ff:fe12:3456%eth0".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn ping_reply_parser_finds_windows_ipv6_replies() {
+        let replies = parse_ping_reply_addresses(b"Reply from fe80::1%12: time<1ms\n");
+
+        assert_eq!(
+            replies,
+            vec![super::DiscoveredAddress {
+                ip_addr: IpAddr::V6("fe80::1".parse().unwrap()),
+                display_addr: "fe80::1%12".to_string(),
+            }]
         );
     }
 }

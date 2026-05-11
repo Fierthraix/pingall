@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 mod util;
 use util::{
-    PingBackend, can_open_raw_socket, command_exists, get_addresses, get_args,
-    hostname_resolution_supported, raw_socket_supported, resolve_hostname, select_ping_backend,
-    socket_ping, system_ping,
+    DiscoveredAddress, InterfaceAddress, PingBackend, can_open_raw_socket, command_exists,
+    get_addresses, get_args, hostname_resolution_supported, raw_socket_supported, resolve_hostname,
+    select_ping_backend, socket_ping, system_ipv6_multicast_ping, system_ping,
 };
 
 use tokio::sync::Semaphore;
@@ -50,10 +50,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Whether to use system `ping` command, or open a socket ourselves.
-    let ping_backend = select_ping_backend(args.raw_socket, command_exists("ping"))?;
+    let system_ping_exists = command_exists("ping");
+    if args.scan_ipv6() && !system_ping_exists {
+        return Err("system `ping` command not found and IPv6 discovery requires it".into());
+    }
+
+    let ping_backend = select_ping_backend(args.raw_socket, system_ping_exists)?;
 
     // Check we have permission to open raw sockets.
-    if ping_backend == PingBackend::RawSocket
+    if args.scan_ipv4()
+        && ping_backend == PingBackend::RawSocket
         && !can_open_raw_socket().await
         && stderr().is_terminal()
     {
@@ -62,26 +68,47 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Get our IP address on each interface we'll be checking.
-    let addresses = get_addresses(args.interface);
+    let addresses = get_addresses(args.interface.clone());
 
     // Create a semaphore to limit concurrent operations (prevents "too many open files")
-    let semaphore = Arc::new(Semaphore::new(150)); // Allow max 50 concurrent pings
+    let semaphore = Arc::new(Semaphore::new(150));
 
     // Ping the subnet and record replies.
     let mut results = vec![];
+    let mut ipv6_interfaces = BTreeSet::new();
     for address in addresses {
-        let octets = address.octets();
-        let ip_subnet = format!("{}.{}.{}.", octets[0], octets[1], octets[2]);
-        results.extend(
-            run_subnet(
-                &ip_subnet,
-                resolve,
-                ping_backend,
-                args.timeout,
-                semaphore.clone(),
-            )
-            .await?,
-        );
+        match address {
+            InterfaceAddress::V4(address) if args.scan_ipv4() => {
+                results.extend(
+                    run_ipv4_subnet(
+                        address,
+                        resolve,
+                        ping_backend,
+                        args.timeout,
+                        semaphore.clone(),
+                    )
+                    .await?,
+                );
+            }
+            InterfaceAddress::V4(_) => {}
+            InterfaceAddress::V6 {
+                ip: _,
+                interface,
+                index,
+            } if args.scan_ipv6() => {
+                ipv6_interfaces.insert((interface, index));
+            }
+            InterfaceAddress::V6 { .. } => {}
+        }
+    }
+
+    if system_ping_exists {
+        for (interface, index) in ipv6_interfaces {
+            results.extend(
+                run_ipv6_interface(&interface, index, resolve, args.timeout, semaphore.clone())
+                    .await?,
+            );
+        }
     }
 
     let mut seen = BTreeSet::new();
@@ -109,49 +136,91 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Ping all the IP addresses on a subnet formatted `X.X.X.`.
-async fn run_subnet(
-    subnet: &str,
+/// Ping all the IP addresses on the local IPv4 `/24`.
+async fn run_ipv4_subnet(
+    address: std::net::Ipv4Addr,
     resolve_hostnames: bool,
     ping_backend: PingBackend,
     timeout: usize,
     semaphore: Arc<Semaphore>,
 ) -> Result<PingResults, Box<dyn std::error::Error>> {
+    let octets = address.octets();
+
     Ok((1..255)
-        .filter_map(|i| {
-            // Parse IP address safely
-            let ip_str = format!("{}{}", subnet, i);
-            match ip_str.parse() {
-                Ok(ip_v4) => {
-                    let ip_addr = IpAddr::V4(ip_v4);
-                    let semaphore = semaphore.clone();
-                    Some(tokio::spawn(async move {
-                        // Acquire permit before doing any work
-                        let _permit = match semaphore.acquire().await {
-                            Ok(permit) => permit,
-                            Err(_) => return None, // Semaphore closed, skip this ping
-                        };
-
-                        // Ping the address.
-                        let success = match ping_backend {
-                            PingBackend::RawSocket => socket_ping(&ip_addr, timeout).await,
-                            PingBackend::System => system_ping(&ip_addr, timeout).await,
-                        };
-
-                        match (success, resolve_hostnames) {
-                            (true, true) => resolve_hostname(&ip_addr)
-                                .await
-                                .or_else(|| Some(ip_addr.to_string())),
-                            (true, false) => Some(ip_addr.to_string()),
-                            _ => None,
-                        }
-                    }))
-                }
-                Err(_) => {
-                    // Skip invalid IP addresses silently
-                    None
-                }
-            }
+        .map(|i| {
+            let ip_addr = IpAddr::V4(std::net::Ipv4Addr::new(octets[0], octets[1], octets[2], i));
+            ping_address(
+                ip_addr,
+                resolve_hostnames,
+                ping_backend,
+                timeout,
+                semaphore.clone(),
+            )
         })
         .collect())
+}
+
+async fn run_ipv6_interface(
+    interface: &str,
+    index: Option<u32>,
+    resolve_hostnames: bool,
+    timeout: usize,
+    semaphore: Arc<Semaphore>,
+) -> Result<PingResults, Box<dyn std::error::Error>> {
+    let addresses = system_ipv6_multicast_ping(interface, index, timeout).await;
+
+    Ok(addresses
+        .into_iter()
+        .map(|address| format_successful_address(address, resolve_hostnames, semaphore.clone()))
+        .collect())
+}
+
+fn ping_address(
+    ip_addr: IpAddr,
+    resolve_hostnames: bool,
+    ping_backend: PingBackend,
+    timeout: usize,
+    semaphore: Arc<Semaphore>,
+) -> tokio::task::JoinHandle<Option<String>> {
+    tokio::spawn(async move {
+        // Acquire permit before doing any work.
+        let _permit = match semaphore.acquire().await {
+            Ok(permit) => permit,
+            Err(_) => return None,
+        };
+
+        let success = match ping_backend {
+            PingBackend::RawSocket => socket_ping(&ip_addr, timeout).await,
+            PingBackend::System => system_ping(&ip_addr, timeout).await,
+        };
+
+        match (success, resolve_hostnames) {
+            (true, true) => resolve_hostname(&ip_addr)
+                .await
+                .or_else(|| Some(ip_addr.to_string())),
+            (true, false) => Some(ip_addr.to_string()),
+            _ => None,
+        }
+    })
+}
+
+fn format_successful_address(
+    address: DiscoveredAddress,
+    resolve_hostnames: bool,
+    semaphore: Arc<Semaphore>,
+) -> tokio::task::JoinHandle<Option<String>> {
+    tokio::spawn(async move {
+        let _permit = match semaphore.acquire().await {
+            Ok(permit) => permit,
+            Err(_) => return None,
+        };
+
+        if resolve_hostnames {
+            resolve_hostname(&address.ip_addr)
+                .await
+                .or(Some(address.display_addr))
+        } else {
+            Some(address.display_addr)
+        }
+    })
 }
