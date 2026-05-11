@@ -1,6 +1,6 @@
 [package]
 name = "pingall"
-version = "1.0.2"
+version = "2.0.0"
 edition = "2024"
 description = "Ping everything you can reach."
 license = "GPL-3.0-or-later"
@@ -9,8 +9,8 @@ repository = "https://github.com/Fierthraix/pingall"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+clap = { version = "4", features = ["derive"] }
 if-addrs = "0.15"
-pico-args = "0.5"
 tokio = { version = "1", features = ["net", "process", "rt", "sync"] }
 which = "8"
 
