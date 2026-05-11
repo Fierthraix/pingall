@@ -1,4 +1,13 @@
 # pingall
+
+[![CI](https://github.com/Fierthraix/pingall/actions/workflows/ci.yml/badge.svg)](https://github.com/Fierthraix/pingall/actions/workflows/ci.yml)
+[![Crates.io](https://img.shields.io/crates/v/pingall.svg)](https://crates.io/crates/pingall)
+[![Downloads](https://img.shields.io/crates/d/pingall.svg)](https://crates.io/crates/pingall)
+[![Docs.rs](https://docs.rs/pingall/badge.svg)](https://docs.rs/pingall)
+[![License](https://img.shields.io/crates/l/pingall.svg)](LICENSE)
+[![AUR](https://img.shields.io/aur/version/pingall)](https://aur.archlinux.org/packages/pingall)
+[![AUR Git](https://img.shields.io/aur/version/pingall-git)](https://aur.archlinux.org/packages/pingall-git)
+
 Utility to _quickly_ and _efficiently_ discover available IP addresses and their hostnames on your network. This program will always finish within a small timeout, much faster than `nmap 192.168.1.*`.
 
 * Quickly find IPv4 and IPv6 addresses and hostnames on your network.
@@ -7,21 +16,20 @@ Utility to _quickly_ and _efficiently_ discover available IP addresses and their
 ## Usage
 
 ```bash
-USAGE:
-    pingall [OPTIONS]
+Usage: pingall [OPTIONS]
 
-OPTIONS:
-    -i, --interface <INTERFACE>    Interface to search
-    -d, --dont-resolve            Don't attempt to resolve hostnames
-    -r, --raw-socket              Open raw socket instead of using system `ping` command. Unix only, requires permissions
-    -t, --timeout <TIMEOUT>        Timeout of pings in seconds [default: 1]
-    -4, --ipv4                    Scan IPv4 addresses only
-    -6, --ipv6                    Scan IPv6 addresses only
-    -h, --help                    Print help
-    -V, --version                 Print version
+Options:
+  -i, --interface <INTERFACE>  Interface to search
+  -d, --dont-resolve           Don't attempt to resolve hostnames
+  -r, --raw-socket             Open raw socket instead of using system `ping` command. Unix only, requires permissions
+  -t, --timeout <TIMEOUT>      Timeout of pings in seconds [default: 1]
+  -4, --ipv4                   Scan IPv4 addresses only
+  -6, --ipv6                   Scan IPv6 addresses only
+  -h, --help                   Print help
+  -V, --version                Print version
 ```
 
-Ping all available ip addresses:
+Ping all available IP addresses:
 ```bash
 $ pingall
 192.168.0.1        router.local
@@ -58,7 +66,7 @@ release or [`pingall-git`](https://aur.archlinux.org/packages/pingall-git) for
 the current Git version.
 
 ## Details
-Simultaneously `ping` all of the IPv4 addresses on your local `/24` subnets with a 1 second timeout, so we can gauge who is responsive on the network. IPv6 discovery uses the scoped all-nodes multicast address (`ff02::1%interface`) because typical IPv6 subnets are too large to sweep. [tokio](https://tokio.rs/) is used to make it all asynchronous (only 1 thread is used).
+By default, `pingall` scans both IPv4 and IPv6. It simultaneously pings all IPv4 addresses on your local `/24` subnets with a 1 second timeout, so we can gauge who is responsive on the network. IPv6 discovery uses the scoped all-nodes multicast address (`ff02::1%interface`) because typical IPv6 subnets are too large to sweep. [tokio](https://tokio.rs/) is used to make it all asynchronous (only 1 thread is used).
 
 ### Raw Ping
 The system `ping` command is used by default. On Windows, `pingall` always uses the system `ping` command. On Unix systems, opening raw sockets requires elevated permissions. To avoid using the ping command for IPv4 sweeps, you can use the `--raw-socket` flag, but this will require either `sudo`, or running
