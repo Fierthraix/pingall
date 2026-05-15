@@ -1,37 +1,35 @@
 use std::io::{IsTerminal, stderr, stdout};
 
-use clap::{ArgAction, Parser};
 use pingall::cli_support::{
     PingBackend, can_open_raw_socket, command_exists, hostname_resolution_supported,
     raw_socket_supported, select_ping_backend,
 };
 use pingall::{ScanOptions, scan_each};
 
-#[derive(Debug, Parser)]
-#[command(version, about)]
+const HELP: &str = "\
+Ping everything you can reach.
+
+Usage: pingall [OPTIONS]
+
+Options:
+  -i, --interface <INTERFACE>  Interface to search
+  -d, --dont-resolve           Don't attempt to resolve hostnames
+      --no-resolve             Alias for --dont-resolve
+  -r, --raw-socket             Open raw socket instead of using system `ping` command. Unix only, requires permissions
+  -t, --timeout <TIMEOUT>      Timeout of pings in seconds [default: 1]
+  -4, --ipv4                   Scan IPv4 addresses only
+  -6, --ipv6                   Scan IPv6 addresses only
+  -h, --help                   Print help
+  -V, --version                Print version
+";
+
+#[derive(Debug)]
 struct Args {
-    /// Interface to search.
-    #[arg(short, long)]
     interface: Option<String>,
-
-    /// Don't attempt to resolve hostnames.
-    #[arg(short = 'd', long = "dont-resolve", alias = "no-resolve", action = ArgAction::SetTrue)]
     dont_resolve: bool,
-
-    /// Open raw socket instead of using system `ping` command. Unix only, requires permissions.
-    #[arg(short = 'r', long = "raw-socket", action = ArgAction::SetTrue)]
     raw_socket: bool,
-
-    /// Timeout of pings in seconds.
-    #[arg(short, long, default_value_t = 1)]
     timeout: usize,
-
-    /// Scan IPv4 addresses only.
-    #[arg(short = '4', long = "ipv4", conflicts_with = "ipv6", action = ArgAction::SetTrue)]
     ipv4: bool,
-
-    /// Scan IPv6 addresses only.
-    #[arg(short = '6', long = "ipv6", conflicts_with = "ipv4", action = ArgAction::SetTrue)]
     ipv6: bool,
 }
 
@@ -42,6 +40,48 @@ impl Args {
 
     fn scan_ipv6(&self) -> bool {
         !self.ipv4
+    }
+
+    fn parse() -> Result<Self, Box<dyn std::error::Error>> {
+        let mut args = pico_args::Arguments::from_env();
+
+        if args.contains(["-h", "--help"]) {
+            print!("{}", HELP);
+            std::process::exit(0);
+        }
+
+        if args.contains(["-V", "--version"]) {
+            println!("pingall {}", env!("CARGO_PKG_VERSION"));
+            std::process::exit(0);
+        }
+
+        let dont_resolve = args.contains(["-d", "--dont-resolve"]);
+        let no_resolve = args.contains("--no-resolve");
+
+        let parsed = Self {
+            interface: args.opt_value_from_str(["-i", "--interface"])?,
+            dont_resolve: dont_resolve || no_resolve,
+            raw_socket: args.contains(["-r", "--raw-socket"]),
+            timeout: args.opt_value_from_str(["-t", "--timeout"])?.unwrap_or(1),
+            ipv4: args.contains(["-4", "--ipv4"]),
+            ipv6: args.contains(["-6", "--ipv6"]),
+        };
+
+        if parsed.ipv4 && parsed.ipv6 {
+            return Err("the argument '--ipv4' cannot be used with '--ipv6'".into());
+        }
+
+        let remaining = args.finish();
+        if !remaining.is_empty() {
+            let unexpected = remaining
+                .into_iter()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join(" ");
+            return Err(format!("unexpected argument: {}", unexpected).into());
+        }
+
+        Ok(parsed)
     }
 }
 
@@ -59,7 +99,7 @@ fn main() {
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let args = Args::parse();
+    let args = Args::parse()?;
 
     let resolve_hostnames = if args.dont_resolve {
         false
@@ -79,10 +119,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let system_ping_exists = command_exists("ping");
-    if args.scan_ipv6() && !system_ping_exists {
-        return Err("system `ping` command not found and IPv6 discovery requires it".into());
-    }
-
     let ping_backend = select_ping_backend(args.raw_socket, system_ping_exists)?;
     if args.scan_ipv4()
         && ping_backend == PingBackend::RawSocket
