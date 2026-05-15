@@ -15,7 +15,8 @@ mod util;
 
 use util::{
     DiscoveredAddress, InterfaceAddress, PingBackend, get_addresses, hostname_resolution_supported,
-    resolve_hostname, select_ping_backend, socket_ping, system_ipv6_multicast_ping, system_ping,
+    resolve_hostname, select_ping_backend, socket_ipv6_multicast_ping, socket_ping,
+    system_ipv6_multicast_ping, system_ping,
 };
 
 /// Options for a local network scan.
@@ -72,15 +73,12 @@ where
     let resolve = options.resolve_hostnames && hostname_resolution_supported();
     let system_ping_exists = util::command_exists("ping");
 
-    if options.ipv6 && !system_ping_exists {
-        return Err("system `ping` command not found and IPv6 discovery requires it".into());
-    }
-
     let ping_backend = select_ping_backend(options.raw_socket, system_ping_exists)?;
     let addresses = get_addresses(options.interface);
     let semaphore = Arc::new(Semaphore::new(150));
 
     let mut tasks = JoinSet::new();
+    let mut ipv6_tasks = JoinSet::new();
     let mut ipv6_interfaces = BTreeSet::new();
     for address in addresses {
         match address {
@@ -106,17 +104,28 @@ where
         }
     }
 
-    if system_ping_exists {
-        for (interface, index) in ipv6_interfaces {
-            run_ipv6_interface(
-                &mut tasks,
-                &interface,
-                index,
-                resolve,
-                options.timeout,
+    let ipv6_config = Ipv6ScanConfig {
+        resolve_hostnames: resolve,
+        ping_backend,
+        system_ping_exists,
+        timeout: options.timeout,
+    };
+
+    for (interface, index) in ipv6_interfaces {
+        ipv6_tasks.spawn(collect_ipv6_interface(interface, index, ipv6_config));
+    }
+
+    while let Some(result) = ipv6_tasks.join_next().await {
+        let Ok(addresses) = result else {
+            continue;
+        };
+
+        for address in addresses {
+            tasks.spawn(format_successful_address(
+                address,
+                ipv6_config.resolve_hostnames,
                 semaphore.clone(),
-            )
-            .await;
+            ));
         }
     }
 
@@ -155,22 +164,25 @@ fn run_ipv4_subnet(
     }
 }
 
-async fn run_ipv6_interface(
-    tasks: &mut JoinSet<Option<String>>,
-    interface: &str,
-    index: Option<u32>,
+#[derive(Clone, Copy)]
+struct Ipv6ScanConfig {
     resolve_hostnames: bool,
+    ping_backend: PingBackend,
+    system_ping_exists: bool,
     timeout: usize,
-    semaphore: Arc<Semaphore>,
-) {
-    let addresses = system_ipv6_multicast_ping(interface, index, timeout).await;
+}
 
-    for address in addresses {
-        tasks.spawn(format_successful_address(
-            address,
-            resolve_hostnames,
-            semaphore.clone(),
-        ));
+async fn collect_ipv6_interface(
+    interface: String,
+    index: Option<u32>,
+    config: Ipv6ScanConfig,
+) -> Vec<DiscoveredAddress> {
+    match socket_ipv6_multicast_ping(&interface, index, config.timeout, config.ping_backend).await {
+        Ok(addresses) => addresses,
+        Err(()) if config.system_ping_exists => {
+            system_ipv6_multicast_ping(&interface, index, config.timeout).await
+        }
+        Err(()) => Vec::new(),
     }
 }
 

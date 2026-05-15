@@ -1,5 +1,5 @@
 use std::collections::BTreeSet;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV6};
 use std::process::Stdio;
 #[cfg(unix)]
 use std::time::Duration;
@@ -8,7 +8,7 @@ use if_addrs::{IfAddr, get_if_addrs};
 use tokio::process::Command;
 
 #[cfg(unix)]
-use tiny_ping::Pinger;
+use tiny_ping::{Pinger, SocketType};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PingBackend {
@@ -405,6 +405,62 @@ pub(crate) async fn system_ipv6_multicast_ping(
 }
 
 #[cfg(unix)]
+fn scoped_ipv6_multicast_socket_addr(index: Option<u32>) -> Option<SocketAddr> {
+    let index = index?;
+    Some(SocketAddr::V6(SocketAddrV6::new(
+        Ipv6Addr::from([0xff02, 0, 0, 0, 0, 0, 0, 1]),
+        0,
+        0,
+        index,
+    )))
+}
+
+#[cfg(unix)]
+fn discovered_ipv6_reply(interface: &str, ip_addr: IpAddr) -> DiscoveredAddress {
+    let display_addr = match ip_addr {
+        IpAddr::V6(address) => format!("{}%{}", address, interface),
+        IpAddr::V4(address) => address.to_string(),
+    };
+
+    DiscoveredAddress {
+        ip_addr,
+        display_addr,
+    }
+}
+
+#[cfg(unix)]
+pub(crate) async fn socket_ipv6_multicast_ping(
+    interface: &str,
+    index: Option<u32>,
+    timeout: usize,
+    ping_backend: PingBackend,
+) -> Result<Vec<DiscoveredAddress>, ()> {
+    let target = scoped_ipv6_multicast_socket_addr(index).ok_or(())?;
+    let socket_type = match ping_backend {
+        PingBackend::RawSocket => SocketType::Raw,
+        PingBackend::System => SocketType::Dgram,
+    };
+    let mut pinger = Pinger::with_socket_addr(target, socket_type).map_err(|_| ())?;
+    pinger.timeout(Duration::from_secs(timeout as u64));
+
+    let replies = pinger.ping_replies(0).await.map_err(|_| ())?;
+    Ok(replies
+        .into_iter()
+        .map(|result| discovered_ipv6_reply(interface, result.reply.source))
+        .collect())
+}
+
+#[cfg(not(unix))]
+pub(crate) async fn socket_ipv6_multicast_ping(
+    _interface: &str,
+    _index: Option<u32>,
+    _timeout: usize,
+    _ping_backend: PingBackend,
+) -> Result<Vec<DiscoveredAddress>, ()> {
+    Err(())
+}
+
+#[cfg(unix)]
 pub(crate) async fn socket_ping(ip_addr: &IpAddr, timeout: usize) -> bool {
     if let Ok(mut pinger) = Pinger::new(*ip_addr) {
         pinger.timeout(Duration::from_secs(timeout as u64));
@@ -495,6 +551,34 @@ mod tests {
         assert_eq!(
             system_ipv6_multicast_ping_args(PingPlatform::Linux, "eth0", Some(2), 1),
             vec!["-6", "-w", "1", "ff02::1%eth0"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ipv6_multicast_socket_addr_uses_interface_index_as_scope_id() {
+        assert_eq!(
+            super::scoped_ipv6_multicast_socket_addr(Some(2)),
+            Some(std::net::SocketAddr::V6(std::net::SocketAddrV6::new(
+                "ff02::1".parse().unwrap(),
+                0,
+                0,
+                2,
+            )))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn socket_ipv6_replies_keep_interface_scope_in_display_addr() {
+        let address = super::discovered_ipv6_reply("eth0", IpAddr::V6("fe80::1".parse().unwrap()));
+
+        assert_eq!(
+            address,
+            super::DiscoveredAddress {
+                ip_addr: IpAddr::V6("fe80::1".parse().unwrap()),
+                display_addr: "fe80::1%eth0".to_string(),
+            }
         );
     }
 

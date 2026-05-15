@@ -69,11 +69,11 @@ the current Git version.
 By default, `pingall` scans both IPv4 and IPv6. It simultaneously pings all IPv4 addresses on your local `/24` subnets with a 1 second timeout, so we can gauge who is responsive on the network. IPv6 discovery uses the scoped all-nodes multicast address (`ff02::1%interface`) because typical IPv6 subnets are too large to sweep. [tokio](https://tokio.rs/) is used to make it all asynchronous (only 1 thread is used).
 
 ### Raw Ping
-The system `ping` command is used by default. On Windows, `pingall` always uses the system `ping` command. On Unix systems, opening raw sockets requires elevated permissions. To avoid using the ping command for IPv4 sweeps, you can use the `--raw-socket` flag, but this will require either `sudo`, or running
+The system `ping` command is used by default for IPv4 sweeps. On Windows, `pingall` always uses the system `ping` command. On Unix systems, opening raw sockets requires elevated permissions. To avoid using the ping command for IPv4 sweeps, you can use the `--raw-socket` flag, but this will require either `sudo`, or running
 ```
 setcap cap_net_raw+ep $(which pingall)
 ```
-to give this program permission. IPv6 multicast discovery uses the system `ping` command even when raw socket mode is requested.
+to give this program permission. IPv6 multicast discovery uses `tiny-ping` sockets on Unix and falls back to the system `ping` command when sockets are unavailable.
 
 ### Dependencies
 * [cargo](https://rustup.rs/)

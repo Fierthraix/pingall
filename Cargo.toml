@@ -15,7 +15,7 @@ tokio = { version = "1", features = ["net", "process", "rt", "sync"] }
 which = "8"
 
 [target.'cfg(unix)'.dependencies]
-tiny-ping = "0.5"
+tiny-ping = "0.6.2"
 
 [target.'cfg(windows)'.dependencies]
 dns-lookup = "3"
