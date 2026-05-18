@@ -144,22 +144,18 @@ jobs:
           ssh-keyscan -t rsa,ecdsa,ed25519 aur.archlinux.org > "$HOME/.ssh/known_hosts"
           chmod 600 "$HOME/.ssh/known_hosts"
           ssh-keygen -F aur.archlinux.org -f "$HOME/.ssh/known_hosts" >/dev/null
-          cat > "$HOME/.ssh/config" <<EOF
-          Host aur.archlinux.org
-            HostName aur.archlinux.org
-            User aur
-            IdentityFile $HOME/.ssh/aur_github_actions
-            IdentitiesOnly yes
-            UserKnownHostsFile $HOME/.ssh/known_hosts
-            StrictHostKeyChecking yes
-          EOF
+          ssh -i "$HOME/.ssh/aur_github_actions" \
+            -o IdentitiesOnly=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o StrictHostKeyChecking=yes \
+            aur@aur.archlinux.org help >/dev/null
         env:
           AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
 
       - name: Generate and push AUR packages
         run: |
           set -euo pipefail
-          export GIT_SSH_COMMAND="ssh -F $HOME/.ssh/config"
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur_github_actions -o IdentitiesOnly=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts -o StrictHostKeyChecking=yes"
           source packaging/aur/config.env
           version="${GITHUB_REF_NAME#v}"
           short_sha="${GITHUB_SHA::7}"
