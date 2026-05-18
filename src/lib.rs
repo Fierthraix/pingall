@@ -4,8 +4,8 @@
 //! mirrors that tool's scan operation without exposing the lower-level probing
 //! implementation details.
 
-use std::collections::BTreeSet;
-use std::net::IpAddr;
+use std::collections::{BTreeMap, BTreeSet};
+use std::net::{IpAddr, Ipv6Addr};
 use std::sync::Arc;
 
 use tokio::sync::Semaphore;
@@ -79,7 +79,7 @@ where
 
     let mut tasks = JoinSet::new();
     let mut ipv6_tasks = JoinSet::new();
-    let mut ipv6_interfaces = BTreeSet::new();
+    let mut ipv6_interfaces = BTreeMap::new();
     for address in addresses {
         match address {
             InterfaceAddress::V4(address) if options.ipv4 => {
@@ -94,11 +94,14 @@ where
             }
             InterfaceAddress::V4(_) => {}
             InterfaceAddress::V6 {
-                ip: _,
+                ip,
                 interface,
                 index,
             } if options.ipv6 => {
-                ipv6_interfaces.insert((interface, index));
+                let source = ipv6_interfaces.entry((interface, index)).or_insert(ip);
+                if ipv6_source_preferred(*source, ip) {
+                    *source = ip;
+                }
             }
             InterfaceAddress::V6 { .. } => {}
         }
@@ -111,8 +114,13 @@ where
         timeout: options.timeout,
     };
 
-    for (interface, index) in ipv6_interfaces {
-        ipv6_tasks.spawn(collect_ipv6_interface(interface, index, ipv6_config));
+    for ((interface, index), source) in ipv6_interfaces {
+        ipv6_tasks.spawn(collect_ipv6_interface(
+            interface,
+            index,
+            source,
+            ipv6_config,
+        ));
     }
 
     while let Some(result) = ipv6_tasks.join_next().await {
@@ -156,6 +164,7 @@ fn run_ipv4_subnet(
         let ip_addr = IpAddr::V4(std::net::Ipv4Addr::new(octets[0], octets[1], octets[2], i));
         tasks.spawn(ping_address(
             ip_addr,
+            Some(IpAddr::V4(address)),
             resolve_hostnames,
             ping_backend,
             timeout,
@@ -175,9 +184,18 @@ struct Ipv6ScanConfig {
 async fn collect_ipv6_interface(
     interface: String,
     index: Option<u32>,
+    source: Ipv6Addr,
     config: Ipv6ScanConfig,
 ) -> Vec<DiscoveredAddress> {
-    match socket_ipv6_multicast_ping(&interface, index, config.timeout, config.ping_backend).await {
+    match socket_ipv6_multicast_ping(
+        &interface,
+        index,
+        source,
+        config.timeout,
+        config.ping_backend,
+    )
+    .await
+    {
         Ok(addresses) => addresses,
         Err(()) if config.system_ping_exists => {
             system_ipv6_multicast_ping(&interface, index, config.timeout).await
@@ -188,6 +206,7 @@ async fn collect_ipv6_interface(
 
 async fn ping_address(
     ip_addr: IpAddr,
+    source: Option<IpAddr>,
     resolve_hostnames: bool,
     ping_backend: PingBackend,
     timeout: usize,
@@ -199,7 +218,7 @@ async fn ping_address(
     };
 
     let success = match ping_backend {
-        PingBackend::RawSocket => socket_ping(&ip_addr, timeout).await,
+        PingBackend::RawSocket => socket_ping(&ip_addr, source, timeout).await,
         PingBackend::System => system_ping(&ip_addr, timeout).await,
     };
 
@@ -210,6 +229,10 @@ async fn ping_address(
         (true, false) => Some(ip_addr.to_string()),
         _ => None,
     }
+}
+
+fn ipv6_source_preferred(current: Ipv6Addr, candidate: Ipv6Addr) -> bool {
+    !current.is_unicast_link_local() && candidate.is_unicast_link_local()
 }
 
 async fn format_successful_address(
@@ -237,4 +260,21 @@ pub mod cli_support {
         PingBackend, can_open_raw_socket, command_exists, hostname_resolution_supported,
         raw_socket_supported, select_ping_backend,
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ipv6_source_preferred;
+
+    #[test]
+    fn ipv6_source_selection_prefers_link_local_for_multicast() {
+        assert!(ipv6_source_preferred(
+            "2001:db8::1".parse().unwrap(),
+            "fe80::1".parse().unwrap(),
+        ));
+        assert!(!ipv6_source_preferred(
+            "fe80::1".parse().unwrap(),
+            "2001:db8::1".parse().unwrap(),
+        ));
+    }
 }

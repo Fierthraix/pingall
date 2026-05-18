@@ -432,6 +432,7 @@ fn discovered_ipv6_reply(interface: &str, ip_addr: IpAddr) -> DiscoveredAddress 
 pub(crate) async fn socket_ipv6_multicast_ping(
     interface: &str,
     index: Option<u32>,
+    source: Ipv6Addr,
     timeout: usize,
     ping_backend: PingBackend,
 ) -> Result<Vec<DiscoveredAddress>, ()> {
@@ -441,6 +442,14 @@ pub(crate) async fn socket_ipv6_multicast_ping(
         PingBackend::System => SocketType::Dgram,
     };
     let mut pinger = Pinger::with_socket_addr(target, socket_type).map_err(|_| ())?;
+    pinger
+        .bind_source(SocketAddr::V6(SocketAddrV6::new(
+            source,
+            0,
+            0,
+            index.unwrap_or(0),
+        )))
+        .map_err(|_| ())?;
     pinger.timeout(Duration::from_secs(timeout as u64));
 
     let replies = pinger.ping_replies(0).await.map_err(|_| ())?;
@@ -454,6 +463,7 @@ pub(crate) async fn socket_ipv6_multicast_ping(
 pub(crate) async fn socket_ipv6_multicast_ping(
     _interface: &str,
     _index: Option<u32>,
+    _source: Ipv6Addr,
     _timeout: usize,
     _ping_backend: PingBackend,
 ) -> Result<Vec<DiscoveredAddress>, ()> {
@@ -461,8 +471,13 @@ pub(crate) async fn socket_ipv6_multicast_ping(
 }
 
 #[cfg(unix)]
-pub(crate) async fn socket_ping(ip_addr: &IpAddr, timeout: usize) -> bool {
+pub(crate) async fn socket_ping(ip_addr: &IpAddr, source: Option<IpAddr>, timeout: usize) -> bool {
     if let Ok(mut pinger) = Pinger::new(*ip_addr) {
+        if let Some(source) = source
+            && pinger.bind_source(SocketAddr::new(source, 0)).is_err()
+        {
+            return false;
+        }
         pinger.timeout(Duration::from_secs(timeout as u64));
         return pinger.ping(0).await.is_ok();
     }
@@ -470,7 +485,11 @@ pub(crate) async fn socket_ping(ip_addr: &IpAddr, timeout: usize) -> bool {
 }
 
 #[cfg(not(unix))]
-pub(crate) async fn socket_ping(_ip_addr: &IpAddr, _timeout: usize) -> bool {
+pub(crate) async fn socket_ping(
+    _ip_addr: &IpAddr,
+    _source: Option<IpAddr>,
+    _timeout: usize,
+) -> bool {
     false
 }
 
