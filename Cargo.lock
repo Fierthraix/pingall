@@ -77,7 +77,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "pingall"
-version = "2.1.1"
+version = "2.1.2"
 dependencies = [
  "dns-lookup",
  "if-addrs",
@@ -109,9 +109,9 @@ dependencies = [
 
 [[package]]
 name = "tiny-ping"
-version = "0.6.2"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa874b109921e22f3bf3fe0ca5690ed5afcf8674925754d7c20259a195a1839f"
+checksum = "ff83e6ac08bc816b1f29a89dfe7223ecc10417639450f7a987f753c85dd6acd5"
 dependencies = [
  "socket2",
  "tokio",

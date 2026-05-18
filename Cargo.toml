@@ -1,6 +1,6 @@
 [package]
 name = "pingall"
-version = "2.1.1"
+version = "2.1.2"
 edition = "2024"
 description = "Ping everything you can reach."
 license = "GPL-3.0-or-later"
@@ -15,7 +15,7 @@ tokio = { version = "1", features = ["net", "process", "rt", "sync"] }
 which = "8"
 
 [target.'cfg(unix)'.dependencies]
-tiny-ping = "0.6.2"
+tiny-ping = "0.7.0"
 
 [target.'cfg(windows)'.dependencies]
 dns-lookup = "3"
