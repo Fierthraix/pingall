@@ -1,12 +1,14 @@
 # pingall
 
 [![CI](https://github.com/Fierthraix/pingall/actions/workflows/ci.yml/badge.svg)](https://github.com/Fierthraix/pingall/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Fierthraix/pingall?display_name=tag)](https://github.com/Fierthraix/pingall/releases)
 [![Crates.io](https://img.shields.io/crates/v/pingall.svg)](https://crates.io/crates/pingall)
 [![Downloads](https://img.shields.io/crates/d/pingall.svg)](https://crates.io/crates/pingall)
 [![Docs.rs](https://docs.rs/pingall/badge.svg)](https://docs.rs/pingall)
 [![License](https://img.shields.io/crates/l/pingall.svg)](LICENSE)
 [![AUR](https://img.shields.io/aur/version/pingall)](https://aur.archlinux.org/packages/pingall)
-[![AUR Git](https://img.shields.io/aur/version/pingall-git)](https://aur.archlinux.org/packages/pingall-git)
+[![AUR bin](https://img.shields.io/aur/version/pingall-bin)](https://aur.archlinux.org/packages/pingall-bin)
+[![AUR git](https://img.shields.io/aur/version/pingall-git)](https://aur.archlinux.org/packages/pingall-git)
 
 Utility to _quickly_ and _efficiently_ discover available IP addresses and their hostnames on your network. This program will always finish within a small timeout, much faster than `nmap 192.168.1.*`.
 
@@ -56,14 +58,25 @@ pingall --ipv6 --interface wlan0
 ```
 
 ## Installation
+
 ```bash
 cargo install pingall
+yay -S pingall
+yay -S pingall-bin
+yay -S pingall-git
+brew tap Fierthraix/tap
+brew install --cask pingall
+nix run github:Fierthraix/nur-packages#pingall
 ```
 
-On Arch Linux, `pingall` is also available from the AUR as
-[`pingall`](https://aur.archlinux.org/packages/pingall) for the latest crates.io
-release or [`pingall-git`](https://aur.archlinux.org/packages/pingall-git) for
-the current Git version.
+```powershell
+scoop bucket add fierthraix https://github.com/Fierthraix/scoop-bucket
+scoop install pingall
+```
+
+```text
+deb/rpm/apk/tar/zip: https://github.com/Fierthraix/pingall/releases
+```
 
 ## Details
 By default, `pingall` scans both IPv4 and IPv6. It simultaneously pings all IPv4 addresses on your local `/24` subnets with a 1 second timeout, so we can gauge who is responsive on the network. IPv6 discovery uses the scoped all-nodes multicast address (`ff02::1%interface`) because typical IPv6 subnets are too large to sweep. [tokio](https://tokio.rs/) is used to make it all asynchronous (only 1 thread is used).
