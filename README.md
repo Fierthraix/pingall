@@ -59,23 +59,43 @@ pingall --ipv6 --interface wlan0
 
 ## Installation
 
+### Cargo
+
 ```bash
 cargo install pingall
+```
+
+### Arch Linux / AUR
+
+```bash
 yay -S pingall
 yay -S pingall-bin
 yay -S pingall-git
-brew tap Fierthraix/tap
-brew install --cask pingall
-nix run github:Fierthraix/nur-packages#pingall
 ```
+
+### macOS / Homebrew
+
+```zsh
+brew install --cask Fierthraix/tap/pingall
+```
+
+### Windows / Scoop
 
 ```powershell
 scoop bucket add fierthraix https://github.com/Fierthraix/scoop-bucket
 scoop install pingall
 ```
 
+### Nix
+
+```bash
+nix profile install github:Fierthraix/nur-packages#pingall
+```
+
+### Release Assets
+
 ```text
-deb/rpm/apk/tar/zip: https://github.com/Fierthraix/pingall/releases
+https://github.com/Fierthraix/pingall/releases/latest
 ```
 
 ## Details
